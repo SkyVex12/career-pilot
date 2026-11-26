@@ -891,23 +891,131 @@ def test_mock_interview_script_scores_the_10_29_turns() -> None:
 
 
 def test_a_broken_citation_never_reaches_the_screen() -> None:
-    """2026-10-30 standup: a fast cue ended in "[n: n/a]", which the client shows as text."""
+    """2026-10-30 standup: a fast cue ended in \"[n: n/a]\", which the client shows as text."""
     from copilot_gateway.answer import CitationFilter
 
     def run(chunks: list[str]) -> str:
         f = CitationFilter()
         return "".join(f.feed(c) for c in chunks) + f.flush()
 
+    # Preserve whitespace outside the tag, including when an error interrupts a stream.
     text = "- Preview and exports should match [n: n/a]\n- Keep one setting [n:w13b]\n"
-    assert run([text]) == "- Preview and exports should match\n- Keep one setting [n:w13b]\n"
-    # Split across chunks, as a model streams it.
+    assert run([text]) == "- Preview and exports should match \n- Keep one setting [n:w13b]\n"
     chunks = ["- Match the preview [", "n:", " n/a", "]\n- One setting [n:w1", "3b] [~]\n"]
-    assert run(chunks) == "- Match the preview\n- One setting [n:w13b] [~]\n"
-    assert run(["- No source [n:]", "\n"]) == "- No source\n"
-    assert run(["a [b"]) == "a [b"  # an unclosed bracket comes out at the end
-    # Text before an open bracket is not held back.
+    assert run(chunks) == "- Match the preview \n- One setting [n:w13b] [~]\n"
+    assert run(["- No source [n:]", "\n"]) == "- No source \n"
+    assert run(["a [b"]) == "a [b"
     f = CitationFilter()
-    assert f.feed("- Keep one setting [n:") == "- Keep one setting"
+    assert f.feed("- Keep one setting [n:") == "- Keep one setting "
+
+
+def _filter_citation_chunks(chunks: list[str]) -> str:
+    from copilot_gateway.answer import CitationFilter
+
+    parser = CitationFilter()
+    return "".join(parser.feed(chunk) for chunk in chunks) + parser.flush()
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Before [n: Alex coordinates the release.] after.", "Before  after."),
+        ("Before[n: Alex coordinates the release.] after.", "Before after."),
+        ("Before [n:" + "long malformed source " * 4 + "] after.", "Before  after."),
+        ("Before [n: unfinished source", "Before "),
+        ("Before [n:ab", "Before "),
+        ("Before [n:", "Before "),
+        ("Before [n: invalid\nNext paragraph.] End.", "Before \nNext paragraph.] End."),
+        ("Before [n:ab\r\n- Next paragraph [n:a1]", "Before \r\n- Next paragraph [n:a1]"),
+        ("Before [n: n/a]\n- Next paragraph [ordinary]", "Before \n- Next paragraph [ordinary]"),
+        ("[n:][n:x][n:123456789][n:a_b][n:é1] Tail", " Tail"),
+        ("[n:ab] [N:A1] [n:12345678] [n:none]", "[n:ab] [N:A1] [n:12345678] [n:none]"),
+        ("[n: bad][n:a1][n: bad] tail", "[n:a1] tail"),
+        ("Word[n:a1] and array[n:]", "Word[n:a1] and array[n:]"),
+        ("A [normal bracket] [~] [name: value]", "A [normal bracket] [~] [name: value]"),
+        ("A [", "A ["),
+        ("A [n", "A [n"),
+        ("a [b", "a [b"),
+        ("a[n:] and items[n:1]", "a[n:] and items[n:1]"),
+        (r"Literal \[n: n/a] and [n: n/a] tail", r"Literal \[n: n/a] and  tail"),
+        ("`[n: not a citation]` [n: n/a] tail", "`[n: not a citation]`  tail"),
+        (
+            "``[n: not a citation] and `ticks` `` [n:] tail",
+            "``[n: not a citation] and `ticks` ``  tail",
+        ),
+        (
+            "Inline ```[n: literal] ```` [n: still literal]``` [n:] end",
+            "Inline ```[n: literal] ```` [n: still literal]```  end",
+        ),
+        (
+            "```python\na[n:]\n# [n: not a citation]\n```\nAnswer [n:] end",
+            "```python\na[n:]\n# [n: not a citation]\n```\nAnswer  end",
+        ),
+        ("~~~python\na[n:]\n~~~\nAnswer [n:] end", "~~~python\na[n:]\n~~~\nAnswer  end"),
+        ("```python\na[n:]\n````\nAnswer [n:] end", "```python\na[n:]\n````\nAnswer  end"),
+        ("~~~python\na[n:]\n~~~~ \t\nAnswer [n:] end", "~~~python\na[n:]\n~~~~ \t\nAnswer  end"),
+        (
+            "   ```python\na[n:]\n   ````\nAnswer [n:] end",
+            "   ```python\na[n:]\n   ````\nAnswer  end",
+        ),
+        (
+            "```\n``` still code [n: literal]\n```\nAnswer [n:] end",
+            "```\n``` still code [n: literal]\n```\nAnswer  end",
+        ),
+        (
+            "[docs](https://example.invalid/a[n: not a citation]) [n:] end",
+            "[docs](https://example.invalid/a[n: not a citation])  end",
+        ),
+        (
+            "[docs](https://example.invalid/a(b)/c) [n:] end",
+            "[docs](https://example.invalid/a(b)/c)  end",
+        ),
+        (" ".join(["word"] * 8) + "\t" * 80, " ".join(["word"] * 8) + "\t" * 80),
+    ],
+)
+def test_citation_filter_has_chunk_independent_recovery(text: str, expected: str) -> None:
+    """Newlines end malformed tags, even when the closing bracket arrives later."""
+    assert _filter_citation_chunks([text]) == expected
+    assert _filter_citation_chunks(list(text)) == expected
+    for cut in range(len(text) + 1):
+        assert _filter_citation_chunks([text[:cut], text[cut:]]) == expected, cut
+
+
+def test_observed_long_citation_at_every_three_chunk_partition() -> None:
+    text = "A [n: Alex coordinates the release.] Z"
+    for first in range(len(text) + 1):
+        for second in range(first, len(text) + 1):
+            assert (
+                _filter_citation_chunks([text[:first], text[first:second], text[second:]]) == "A  Z"
+            )
+
+
+def test_citation_filter_bounds_pending_text_and_preserves_the_remainder() -> None:
+    from copilot_gateway.answer import CitationFilter
+
+    parser = CitationFilter()
+    assert parser.feed("A useful complete sentence. [n:") == "A useful complete sentence. "
+    for _ in range(1000):
+        assert parser.feed("not a source " * 16) == ""
+        assert len(parser.buf) <= 11
+    assert parser.feed("] Next sentence. [n:a1]\n") == " Next sentence. [n:a1]\n"
+    assert parser.flush() == ""
+
+    assert parser.feed("Another answer [n:ab") == "Another answer "
+    assert parser.flush() == ""
+    assert parser.feed(" [") == " "
+    assert parser.flush() == "["
+    assert parser.flush() == ""
+
+
+def test_citation_filter_does_not_buffer_plain_text_or_whitespace() -> None:
+    from copilot_gateway.answer import CitationFilter
+
+    parser = CitationFilter()
+    text = "I chose Redis for low latency. " + " \t" * 10000
+    assert parser.feed(text) == text
+    assert parser.buf == ""
+    assert parser.flush() == ""
 
 
 def test_fast_cues_never_talk_about_the_notes_or_hand_the_question_back() -> None:

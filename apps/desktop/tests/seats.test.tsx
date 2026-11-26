@@ -79,6 +79,19 @@ describe("the session reducer", () => {
     expect(s.sentNotes).toEqual([{ id: "c1", text: "Mention the rollback", result: "rate_limited" }]);
   });
 
+  it("resumes a counted adaptive answer from a compacted guest snapshot", () => {
+    n = 0;
+    let s = fold([ready(), srv({ type: "seat.snapshot", messages: [
+      { type: "question.detected", seq: 1, question_id: "q", text: "Where are you based?", question_type: "other", confidence: 1, speculative: false, answer_strategy: "adaptive_on_demand" },
+      { type: "answer.delta", seq: 3, question_id: "q", pass: "fast", text: "I am based ", sequence: 0, sequence_end: 2 },
+    ] })]);
+    s = reduce(s, { type: "event", event: srv({ type: "answer.delta", question_id: "q", pass: "fast", text: "in Austin.", sequence: 2 }).event });
+    s = reduce(s, { type: "event", event: srv({ type: "answer.done", question_id: "q", pass: "fast", delta_count: 3, memory_refs: [], usage: { input_tokens: 0, cached_tokens: 0, output_tokens: 0 } }).event });
+    expect(s.questions[0].answerStrategy).toBe("adaptive_on_demand");
+    expect(s.questions[0].fast).toMatchObject({ text: "I am based in Austin.", done: true, error: null });
+    expect(s.questions[0].deepRequested).toBe(false);
+  });
+
   it("keeps the host's seats, notes (once each) and sharing", () => {
     n = 0;
     const note = srv({ type: "seat.note", seat_id: SEAT, note_id: "n1", name: "Pavlo", text: "Ask about on-call", at: "2026-11-17T15:00:00Z" });

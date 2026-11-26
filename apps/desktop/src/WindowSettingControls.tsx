@@ -1,6 +1,6 @@
 import { useId } from "react";
 import { Button, IconButton, SegmentedControl } from "./ui";
-import { useAnswerStyle, useViewPrefs } from "./viewPreferences";
+import { RESPONSE_LENGTHS, useAnswerStyle, useResponseLength, useViewPrefs } from "./viewPreferences";
 import "./windowSettingControls.css";
 
 export function TransparencyControl({ opacity, disabled, onChange, onCommit }: {
@@ -21,6 +21,7 @@ export function ReadingSettings({ running, guest = false, busy, run }: {
 }) {
   const view = useViewPrefs();
   const [answerStyle, changeAnswerStyle] = useAnswerStyle(running);
+  const [responseLength, changeResponseLength] = useResponseLength(running);
   return <div className="window-reading-settings">
     <div className="window-text-size"><span>Text size</span><div>
       <IconButton label="Smaller text (Ctrl+minus)" icon="A−" size="sm" onClick={() => view.stepText(-1)} />
@@ -30,6 +31,10 @@ export function ReadingSettings({ running, guest = false, busy, run }: {
     {!guest && <div className="window-answer-format"><span>Answer format</span>
       <SegmentedControl equal label="Answer format" value={answerStyle} options={[["bullets", "Bullets"], ["paragraph", "Paragraphs"]] as const}
         size="sm" disabled={busy} onChange={value => run(() => changeAnswerStyle(value))} />
+    </div>}
+    {!guest && <div className="window-answer-format"><span>Response length</span>
+      <SegmentedControl equal label="Response length" value={responseLength} options={RESPONSE_LENGTHS}
+        size="sm" disabled={busy} onChange={value => run(() => changeResponseLength(value))} />
     </div>}
   </div>;
 }

@@ -142,6 +142,10 @@ export interface SessionStart {
    */
   answer_style?: "bullets" | "paragraph";
   /**
+   * Answer length preference; absent means default.
+   */
+  response_length?: "default" | "concise" | "detailed";
+  /**
    * An online test with no call (coding mode): the client sends no audio and nothing is transcribed; screenshots and typed questions are answered, and keep the session from ending as idle.
    */
   no_call?: boolean;
@@ -281,11 +285,15 @@ export interface ModeSet {
   mode: Mode;
 }
 /**
- * User switches the detailed answer's style mid-call; applies to the next answers.
+ * User changes answer presentation preferences mid-call; applies to the next answers.
  */
 export interface AnswerStyleSet {
   type: "answer_style.set";
   answer_style: AnswerStyle;
+  /**
+   * Optional length preference; omitted leaves the current preference unchanged.
+   */
+  response_length?: "default" | "concise" | "detailed";
 }
 /**
  * Change the spoken language of an active call. The server acknowledges the effective language before clients update their selection.
@@ -400,6 +408,10 @@ export interface TranscriptFinal {
  * A question aimed at the user. speculative: true means it may still be cancelled; confirmation repeats the same question_id with speculative: false.
  */
 export interface QuestionDetected {
+  /**
+   * Live-answer strategy. Missing means the legacy dual-answer presentation.
+   */
+  answer_strategy?: "legacy_dual" | "adaptive" | "adaptive_hybrid" | "adaptive_on_demand";
   type: "question.detected";
   seq: Seq;
   question_id: Uuid;
@@ -450,6 +462,14 @@ export interface QuestionCancelled {
  * Next chunk of streamed answer text.
  */
 export interface AnswerDelta {
+  /**
+   * Zero-based chunk sequence within this question and pass.
+   */
+  sequence?: number;
+  /**
+   * Exclusive chunk sequence end for a compacted snapshot chunk.
+   */
+  sequence_end?: number;
   type: "answer.delta";
   seq: Seq;
   question_id: Uuid;
@@ -460,6 +480,10 @@ export interface AnswerDelta {
  * Answer pass finished.
  */
 export interface AnswerDone {
+  /**
+   * Total number of chunks sent for this question and pass.
+   */
+  delta_count?: number;
   type: "answer.done";
   seq: Seq;
   question_id: Uuid;
@@ -495,6 +519,10 @@ export interface LatencyMs {
   detector_ms?: number;
   first_token_ms?: number;
   first_delta_ms?: number;
+  /**
+   * First sentence boundary observed in emitted text; a syntactic proxy, not a semantic usefulness score.
+   */
+  first_complete_sentence_ms?: number;
   total_ms?: number;
   final_ms?: number;
   start_ms?: number;
@@ -637,6 +665,11 @@ export interface SeatCommandResult {
   command_id: Uuid;
   result: "ok" | "denied" | "expired" | "rate_limited" | "failed";
 }
+
+/**
+ * Answer depth preference: default adapts to the question; concise is direct and compact; detailed includes relevant explanation without padding simple answers.
+ */
+export type ResponseLength = "default" | "concise" | "detailed";
 
 /**
  * How a screen's tasks are answered: interview (a call is on) or assessment (an online test, no call).

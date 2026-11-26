@@ -60,6 +60,7 @@ def guest_view(message: dict[str, Any]) -> dict[str, Any] | None:
             "pass": message["pass"],
             "memory_refs": message.get("memory_refs", []),
             "usage": {"input_tokens": 0, "cached_tokens": 0, "output_tokens": 0},
+            **({"delta_count": message["delta_count"]} if "delta_count" in message else {}),
         }
     return message
 
@@ -90,6 +91,8 @@ class ViewFold:
         self.sharing = sharing
         self.items: OrderedDict[tuple[Any, ...], dict[str, Any]] = OrderedDict()
         self.dirty = False
+        self._answer_slots: dict[tuple[Any, ...], tuple[Any, ...]] = {}
+        self._answer_index = 0
 
     @classmethod
     def load(cls, raw: str | bytes | None) -> "ViewFold | None":
@@ -149,16 +152,36 @@ class ViewFold:
             self.items[("q", m.get("question_id"))] = m  # a confirmation keeps the card's place
         elif kind == "question.cancelled":
             self.items[("qc", m.get("question_id"))] = m
+            for pass_name in ("fast", "deep"):
+                self._answer_slots.pop((m.get("question_id"), pass_name), None)
         elif kind == "answer.delta":
-            key = ("a", m.get("question_id"), m.get("pass"))
-            prev = self.items.get(key)
-            if prev is None:
-                self.items[key] = dict(m)
-            else:
+            stream = (m.get("question_id"), m.get("pass"))
+            prev = self.items.get(self._answer_slots.get(stream, ()))
+            start = m.get("sequence")
+            previous_start = None if prev is None else prev.get("sequence")
+            contiguous = prev is not None and (
+                (start is None and previous_start is None)
+                or (
+                    isinstance(start, int)
+                    and isinstance(previous_start, int)
+                    and prev.get("sequence_end", previous_start + 1) == start
+                )
+            )
+            if prev is not None and contiguous:
                 prev["text"] = str(prev.get("text", "")) + str(m.get("text", ""))
                 prev["seq"] = m.get("seq", prev.get("seq"))
+                if isinstance(start, int):
+                    prev["sequence_end"] = m.get("sequence_end", start + 1)
+            else:
+                # Preserve disjoint ranges and terminal ordering. Replaying a snapshot must
+                # not fold duplicate, reordered or late tokens into already completed text.
+                key = ("a", *stream, self._answer_index)
+                self._answer_index += 1
+                self.items[key] = dict(m)
+                self._answer_slots[stream] = key
         elif kind in ("answer.done", "answer.error"):
             self.items[("ad", m.get("question_id"), m.get("pass"), kind)] = m
+            self._answer_slots.pop((m.get("question_id"), m.get("pass")), None)
         elif kind == "session.language":
             # Requests/errors are transient, not state to replay when another display joins.
             self.items[("language",)] = {key: m[key] for key in ("type", "seq", "spoken_language")}
@@ -172,8 +195,9 @@ class ViewFold:
             self._evict()
 
     def _evict(self) -> None:
-        for key in self.items:
-            if key[0] == "t":
-                del self.items[key]
-                return
-        self.items.popitem(last=False)
+        key = next((key for key in self.items if key[0] == "t"), next(iter(self.items)))
+        del self.items[key]
+        if key[0] == "a":
+            stream = key[1:3]
+            if self._answer_slots.get(stream) == key:
+                del self._answer_slots[stream]

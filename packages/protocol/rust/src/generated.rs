@@ -463,6 +463,28 @@ impl AnswerStyle {
     }
 }
 
+/// Answer depth preference: default adapts to the question; concise is direct and compact; detailed
+/// includes relevant explanation without padding simple answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ResponseLength {
+    #[serde(rename = "default")]
+    Default,
+    #[serde(rename = "concise")]
+    Concise,
+    #[serde(rename = "detailed")]
+    Detailed,
+}
+
+impl ResponseLength {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Concise => "concise",
+            Self::Detailed => "detailed",
+        }
+    }
+}
+
 /// Audio source: them = system output (the other side), me = microphone (the user).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Channel {
@@ -604,6 +626,10 @@ pub struct LatencyMs {
     pub first_token_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_delta_ms: Option<u64>,
+    /// First sentence boundary observed in emitted text; a syntactic proxy, not a semantic
+    /// usefulness score.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_complete_sentence_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub total_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -702,6 +728,9 @@ pub struct SessionStart {
     /// The detailed answer's style; absent means bullets.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer_style: Option<AnswerStyle>,
+    /// Answer length preference; absent means default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_length: Option<ResponseLength>,
     /// An online test with no call (coding mode): the client sends no audio and nothing is
     /// transcribed; screenshots and typed questions are answered, and keep the session from ending
     /// as idle.
@@ -1051,10 +1080,13 @@ impl Validate for ModeSet {
     }
 }
 
-/// User switches the detailed answer's style mid-call; applies to the next answers.
+/// User changes answer presentation preferences mid-call; applies to the next answers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnswerStyleSet {
     pub answer_style: AnswerStyle,
+    /// Optional length preference; omitted leaves the current preference unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_length: Option<ResponseLength>,
 }
 
 impl Validate for AnswerStyleSet {
@@ -1234,6 +1266,9 @@ impl Validate for TranscriptFinal {
 /// repeats the same question_id with speculative: false.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct QuestionDetected {
+    /// Live-answer strategy. Missing means the legacy dual-answer presentation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_strategy: Option<QuestionDetectedAnswerStrategy>,
     /// Per-session server message counter. Starts at 1 and increases by one per message; the client
     /// sends the last one it processed on resume (0 if none).
     pub seq: u64,
@@ -1290,6 +1325,12 @@ impl Validate for QuestionCancelled {
 /// Next chunk of streamed answer text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnswerDelta {
+    /// Zero-based chunk sequence within this question and pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<u64>,
+    /// Exclusive chunk sequence end for a compacted snapshot chunk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_end: Option<u64>,
     /// Per-session server message counter. Starts at 1 and increases by one per message; the client
     /// sends the last one it processed on resume (0 if none).
     pub seq: u64,
@@ -1301,6 +1342,9 @@ pub struct AnswerDelta {
 
 impl Validate for AnswerDelta {
     fn validate(&self) -> Result<(), ValidationError> {
+        if let Some(v) = &self.sequence_end {
+            check::min_int("sequence_end", u64::from(*v), 1)?;
+        }
         {
             let v = &self.seq;
             check::min_int("seq", u64::from(*v), 1)?;
@@ -1312,6 +1356,9 @@ impl Validate for AnswerDelta {
 /// Answer pass finished.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AnswerDone {
+    /// Total number of chunks sent for this question and pass.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta_count: Option<u64>,
     /// Per-session server message counter. Starts at 1 and increases by one per message; the client
     /// sends the last one it processed on resume (0 if none).
     pub seq: u64,
@@ -1973,6 +2020,30 @@ impl AnswerFeedbackRating {
         match self {
             Self::Up => "up",
             Self::Down => "down",
+        }
+    }
+}
+
+/// Live-answer strategy. Missing means the legacy dual-answer presentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum QuestionDetectedAnswerStrategy {
+    #[serde(rename = "legacy_dual")]
+    LegacyDual,
+    #[serde(rename = "adaptive")]
+    Adaptive,
+    #[serde(rename = "adaptive_hybrid")]
+    AdaptiveHybrid,
+    #[serde(rename = "adaptive_on_demand")]
+    AdaptiveOnDemand,
+}
+
+impl QuestionDetectedAnswerStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::LegacyDual => "legacy_dual",
+            Self::Adaptive => "adaptive",
+            Self::AdaptiveHybrid => "adaptive_hybrid",
+            Self::AdaptiveOnDemand => "adaptive_on_demand",
         }
     }
 }

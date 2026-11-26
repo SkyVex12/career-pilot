@@ -16,7 +16,8 @@ import logging
 import math
 import time
 from collections import OrderedDict, deque
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast, get_args
@@ -46,8 +47,10 @@ from copilot_core.db import actor_account, user_tx
 from copilot_core.embed import Embedder
 from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
-from copilot_core.llm import LLMDone, ModelRouter
+from copilot_core.llm import LLMDone, LLMRequest, ModelRouter, prompt_cache_key
 from copilot_core.packs import (
+    PREPARED_DIGEST_POLICY,
+    PREPARED_STANDUP_POLICY,
     Digest,
     FocusMaterial,
     MeetingContext,
@@ -158,6 +161,7 @@ class SessionInfo:
     resume_is_base: bool = False
     # How the detailed answer is written: "bullets" or "paragraph" (answer_style.set).
     answer_style: str = "bullets"
+    response_length: str = "default"
     # An online test with no call (coding mode): no audio, nothing transcribed.
     no_call: bool = False
     spoken_language: str = "en"
@@ -358,7 +362,12 @@ class Session:
             carry_gap_ms=self.settings.continuation_gap_ms,
             first_show_min_words=self.settings.first_show_min_words,
             keep_added_words=self.settings.held_keep_added_words,
+            strict_extensions=self.settings.answer_architecture != "legacy_dual",
             early_all_modes=self.settings.early_decision_all_modes,
+            early_stable_partial_ms=self.settings.early_stable_partial_ms,
+            early_final_release=self.settings.early_final_release,
+            committed_final_recheck=self.settings.committed_final_recheck,
+            late_first_text_recovery_ms=self.settings.late_first_text_recovery_ms,
         )
         self.answers = AnswerEngine(self)
         self._automatic_questions: OrderedDict[UUID, AutomaticQuestion] = OrderedDict()
@@ -413,6 +422,10 @@ class Session:
         self.totals_saved_at = 0.0
         self._settling: set[asyncio.Task[None]] = set()
         self._forced: set[asyncio.Task[None]] = set()  # forced questions awaiting their type
+        # A takeover keeps its classifier after the typing deadline. A named-address
+        # wrapper may finish first, so retain its underlying call until it settles too.
+        self._forced_detections: dict[asyncio.Future[Detection], asyncio.Future[Detection]] = {}
+        self._named_detections: dict[asyncio.Future[Detection], asyncio.Future[Detection]] = {}
         self._followed: set[int] = set()  # ends (capture ms) of the turns already followed
         self._last_detection: Detection | None = None
         self._refs = ref_map(digest, pack)
@@ -450,11 +463,28 @@ class Session:
         self._stt_tasks: list[asyncio.Task[None]] = []
         self.end_task: asyncio.Task[None] | None = None
         self._warm: asyncio.Task[None] | None = None
+        self._warm_tasks: set[asyncio.Task[None]] = set()
 
     # Messages to the client.
 
     def emit(self, cls: type[Any], **fields: Any) -> int:
         qid = fields.get("question_id")
+        q = self.answers.questions.get(qid) if isinstance(qid, UUID) else None
+        if q is not None and cls in (models.AnswerDelta, models.AnswerDone, models.AnswerError):
+            q.answer_exposed = True
+        if cls is models.QuestionDetected:
+            if q is not None:
+                q.exposed = True
+            fields.setdefault(
+                "answer_strategy",
+                (
+                    self.answers.strategy(q)
+                    if q is not None
+                    else "legacy_dual"
+                    if fields.get("screen") is not None or self.answers.open_problem()
+                    else self.settings.answer_architecture
+                ),
+            )
         automatic = self._automatic_questions.get(qid) if isinstance(qid, UUID) else None
         pass_ = fields.get("pass")
         if automatic is not None and isinstance(pass_, str):
@@ -505,8 +535,7 @@ class Session:
         self.answers.cancel_all()
         for task in (*self._settling, *self._forced, *self._language_changes):
             task.cancel()
-        if self._warm is not None:
-            self._warm.cancel()
+        self._cancel_warm()
         log.error("%s", error)
         self.error(
             "retention_unavailable",
@@ -616,8 +645,13 @@ class Session:
             {
                 "kind": "summary",
                 "model": done.model,
+                "tier": done.service_tier,
                 "input_tokens": done.usage.input_tokens,
                 "cached_tokens": done.usage.cached_tokens,
+                "reasoning_tokens": done.usage.reasoning_tokens,
+                "cache_write_tokens": done.usage.cache_write_tokens,
+                "cache_write_30m_tokens": done.usage.cache_write_30m_tokens,
+                "cache_write_12h_tokens": done.usage.cache_write_12h_tokens,
                 "output_tokens": done.usage.output_tokens,
                 "stop_reason": done.stop_reason,
                 "cost_usd": self._cost(done),
@@ -639,6 +673,17 @@ class Session:
     def prompt_context(self) -> prompts.PromptContext:
         return self._prompt_ctx
 
+    def prepared_source_version(self, policy: str) -> str | None:
+        if policy == PREPARED_DIGEST_POLICY:
+            return Digest.version_of(self.digest.text) if self.digest is not None else None
+        if policy == PREPARED_STANDUP_POLICY:
+            # Live company memory can change after the pack is loaded. Until lookup gives
+            # a change-token proof, a pack hash alone cannot establish current workplace facts.
+            if self.company_memory is not None or self.pack is None or self.pack.standup is None:
+                return None
+            return Digest.version_of(self.pack.standup.model_dump_json())
+        return None
+
     def _build_prompt_ctx(self) -> prompts.PromptContext:
         employer = self.pack.employer if self.pack is not None else None
         at_work = employer is not None and employer.id == self.info.employer_id
@@ -647,7 +692,13 @@ class Session:
             spoken_language=self.spoken_language,
             mode=self.info.mode,
             digest_text=self.digest.text if self.digest else None,
-            pack_text=render_pack(self.pack) if self.pack else None,
+            pack_text=(
+                render_pack(
+                    self.pack, include_prepared=self.settings.answer_architecture == "legacy_dual"
+                )
+                if self.pack
+                else None
+            ),
             company=employer.name if at_work and employer else None,
             role=(employer.title or None) if at_work and employer else None,
             company_digest=(
@@ -696,6 +747,8 @@ class Session:
         """Load the company's document sections (a worker opened them into Valkey) and index
         them for keyword search. Without them the call still has the company's digest and
         facts; a worker is asked to open them for next time."""
+        if not self._warm_current():
+            return
         eid = self.info.employer_id
         if eid is None or self.info.mode not in prompts.GROUP_MODES or self.sections is not None:
             return
@@ -705,13 +758,18 @@ class Session:
         except (*UNAVAILABLE, ValidationError, ValueError) as e:
             log.warning("could not load the company's document sections: %s", e)
             return
+        if not self._warm_current():
+            return
         if live is None:
             stamp = datetime.now(UTC).strftime("%Y%m%d%H")
             with contextlib.suppress(Exception):
                 await self.svc.jobs.send(jobs.knowledge_publish(uid, eid, "missing", stamp))
             return
         # Tokenizing a few hundred sections takes tens of ms: off the event loop.
-        self.sections = await asyncio.to_thread(knowledge.Index.build, live.chunks)
+        index = await asyncio.to_thread(knowledge.Index.build, live.chunks)
+        if not self._warm_current():
+            return
+        self.sections = index
         self.sections_total = len(live.chunks)
         log.info("loaded %d document sections of employer %s", len(live.chunks), eid)
 
@@ -723,7 +781,9 @@ class Session:
         extra = self.pack.knowledge.names if self.pack.knowledge is not None else []
         return list(dict.fromkeys([*self.pack.keyterms, *extra]))
 
-    async def section_lines(self, text: str, deep: bool) -> list[str]:
+    async def section_lines(
+        self, text: str, deep: bool, *, call: prompts.CallContext | None = None
+    ) -> list[str]:
         """The `<memory>` lines from the company's documents for a pass. Keyword search runs
         in memory, on the question and, when it is short or points back ("which one?"), on
         the question with the company's names said in the last lines of the call. The
@@ -735,7 +795,7 @@ class Session:
         lists = [[c for c, _ in index.search(text, want)]]
         names = self._context_names()
         if knowledge.needs_context(text, names):
-            said = knowledge.context_names(self.conv.context().recent, names)
+            said = knowledge.context_names((call or self.conv.context()).recent, names)
             if said:
                 again = index.search(f"{text} {' '.join(said)}", want)
                 lists.append([c for c, _ in again])
@@ -812,14 +872,25 @@ class Session:
         """The `<memory>` block for a pass: what search found in the chosen company's memory
         within the pass's wait, minus what the pack already shows. Each line cites a short id
         that the session's refs now map, so the answer's citations become memory_refs."""
+        # Keep contextual query expansion tied to this question across lookup waits.
+        call = self.call_context()
         mem = self.company_memory
         if mem is None or not self._memory_on():
-            sections = await self.section_lines(text, pass_ == "deep")
+            sections = await self.section_lines(text, pass_ == "deep", call=call)
             return sections, ({"memory_sections": len(sections)} if sections else {})
         deep = pass_ == "deep"
         s = self.settings
         wait = s.memory_deep_wait_ms if deep else s.memory_fast_wait_ms
-        hits, stats = await mem.hits(text, self._vector(text), deep, wait)
+        sections: list[str] | None = None
+        if deep and s.answer_architecture != "legacy_dual":
+            # Both lookups share the same preloaded embedding, but are independent.
+            # Their 150 ms waits overlap instead of serially adding up to 300 ms.
+            (hits, stats), sections = await asyncio.gather(
+                mem.hits(text, self._vector(text), deep, wait),
+                self.section_lines(text, deep, call=call),
+            )
+        else:
+            hits, stats = await mem.hits(text, self._vector(text), deep, wait)
         if not deep:
             hits = hits[: s.memory_fast_hits]
         in_pack = {i.node_id for i in pack_items(self.pack)} if self.pack else set[UUID]()
@@ -827,13 +898,17 @@ class Session:
             in_pack |= {r.node_id for r in self.pack.knowledge.refs.values()}
         lines = workplace.memory_lines(hits, self._refs, in_pack)
         stats["memory_hits"] = len(lines)
-        sections = await self.section_lines(text, deep)
+        if sections is None:
+            sections = await self.section_lines(text, deep, call=call)
         if sections:
             stats["memory_sections"] = len(sections)
         return lines + sections, stats
 
     def answer_style(self) -> str:
         return self.info.answer_style
+
+    def response_length(self) -> str:
+        return self.info.response_length
 
     def cache_extra(self) -> dict[str, str]:
         """Stored with exact-repeat answers, so deleting a company deletes its answers."""
@@ -868,6 +943,9 @@ class Session:
         cost = cost_usd(
             done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
             s.model_prices, s.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )  # fmt: skip
         return None if cost is None else float(cost)
 
@@ -910,7 +988,10 @@ class Session:
             and self.info.mode in prompts.GROUP_MODES
             and addressed_by_name(utterance, prompts.first_name(self.principal.display_name))
         ):
-            return asyncio.ensure_future(named_or_model(call, grace / 1000))
+            named = asyncio.ensure_future(named_or_model(call, grace / 1000))
+            self._named_detections[named] = call
+            call.add_done_callback(lambda _: self._named_detections.pop(named, None))
+            return named
         return call
 
     def _duplicate_question(self, utterance: str) -> Question | None:
@@ -1021,7 +1102,11 @@ class Session:
     def start_match(self, utterance: str) -> "asyncio.Task[object] | None":
         if self._memory_on() and self.company_memory is not None:
             # Memory search starts with the detector, on the same text.
-            self.company_memory.lookup(utterance, self._vector(utterance))
+            self.company_memory.lookup(
+                utterance,
+                self._vector(utterance),
+                refresh_completed=self.settings.answer_architecture != "legacy_dual",
+            )
         # Prepared answers have no language metadata; keep their evidence in the prompt,
         # but generate localized output instead of displaying unverified verbatim text.
         if self.spoken_language != "en" or not self.matcher.enabled:
@@ -1062,6 +1147,7 @@ class Session:
             question_type=q.qtype,
             confidence=q.confidence,
             speculative=speculative,
+            answer_strategy=self.answers.strategy(q),
         )
         self.answers.add(q)
         return q.qid
@@ -1119,20 +1205,21 @@ class Session:
         text = self._continued(text)
         q.text = text
         q.qtype = detection.qtype
-        q.confidence = DETECTED_CONFIDENCE
+        q.confidence = 1.0 if q.forced else DETECTED_CONFIDENCE
         q.addressed = True
         q.detector_ms = detection.latency_ms
         q.decided_ms = detection.decided_ms
         q.depth = detection.depth
-        q.speculative = speculative
+        q.speculative = speculative and not q.confirmed
         q.detected_at = datetime.now(UTC)
+        q = self.answers.reconcile_strategy(q)
         self.emit(
             models.QuestionDetected,
             question_id=q.qid,
             text=text,
             question_type=q.qtype,
             confidence=q.confidence,
-            speculative=speculative,
+            speculative=q.speculative,
         )
         self.answers.release(qid)
 
@@ -1158,10 +1245,13 @@ class Session:
             if detection.depth is not None:
                 q.depth = detection.depth
             q.first_shown = True
+            self.answers.reconcile_strategy(q)
 
     # STT callbacks.
 
     async def _on_stt(self, r: TimedResult) -> None:
+        if self.ending or self.lost:
+            return
         self._latest_them_result_ms = max(self._latest_them_result_ms, r.end_ms)
         if r.text:
             if r.is_final:
@@ -1193,6 +1283,8 @@ class Session:
         self.turns.on_result(r)
 
     def _on_stt_status(self, state: str, message: str) -> None:
+        if self.ending or self.lost:
+            return
         self.set_status("stt", state, message)
 
     # The user's own words (live STT of the mic).
@@ -1205,6 +1297,8 @@ class Session:
         return any(a <= hi and b >= lo for a, b in self.them_spans)
 
     async def _on_me_stt(self, r: TimedResult) -> None:
+        if self.ending or self.lost:
+            return
         if not r.text:
             return
         if not r.is_final:
@@ -1239,6 +1333,8 @@ class Session:
             if covered or (self.them_open is None and not self.turns.interim):
                 break
             await asyncio.sleep(0.05)
+        if self.ending or self.lost:
+            return
         heard = self.conv.them_text_between(
             line.start_ms - ECHO_TEXT_MS, line.end_ms + ECHO_TEXT_MS
         )
@@ -1249,6 +1345,8 @@ class Session:
             self._accept_me(seg, line)
 
     def _accept_me(self, seg: int, line: Line) -> None:
+        if self.ending or self.lost:
+            return
         self.emit(
             models.TranscriptFinal,
             channel="me",
@@ -1543,6 +1641,18 @@ class Session:
 
     def deep_auto_types(self) -> list[str]:
         s = self.settings
+        if s.answer_architecture != "legacy_dual":
+            # Each card's frozen strategy gates UI prediction; expert technical questions
+            # remain adaptive even though standard technical cards use legacy detail.
+            return (
+                ["technical"]
+                if (
+                    s.adaptive_technical_legacy
+                    and s.deep_pass_auto
+                    and "technical" in s.deep_pass_auto_types
+                )
+                else []
+            )
         # The client knows no "follow": a follow card reaches it as "other". Nor the types
         # used at work, which reach it as the protocol types of prompts.WIRE_TYPES.
         types = [t for t in s.deep_pass_auto_types if t in prompts.QUESTION_TYPES]
@@ -1570,6 +1680,7 @@ class Session:
             "agenda": self.info.agenda or "",
             "material_ids": ",".join(str(i) for i in self.info.material_ids),
             "answer_style": self.info.answer_style,
+            "response_length": self.info.response_length,
             "resume_version_id": str(self.info.resume_version_id)
             if self.info.resume_version_id
             else "",
@@ -1662,11 +1773,11 @@ class Session:
             # prepared replacement below then contains no cancellation points.
             await self.turns.change_language(self.spoken_language)
             pending = [*self._settling, *self._forced]
-            if self._warm is not None:
-                pending.append(self._warm)
             for task in pending:
                 task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            warming = list(self._warm_tasks)
+            self._cancel_warm()
+            await asyncio.gather(*pending, *warming, return_exceptions=True)
             await self.answers.change_language()
             await self.conv.cancel_fold()
             # Close both old channels before opening either replacement. If one fails,
@@ -1804,12 +1915,44 @@ class Session:
         not pay the handshake (see ModelRouter.warm), then write the prompt cache."""
 
         async def warm() -> None:
+            if not self._warm_current():
+                return
             await self.load_sections()
+            if not self._warm_current():
+                return
             await self.router.warm()
+            if not self._warm_current():
+                return
             await self.prewarm_prompts()
 
-        task = asyncio.create_task(warm())
-        self._warm = task  # keep a reference until it finishes
+        self._start_warm(warm)
+
+    def _start_warm(self, work: Callable[[], Coroutine[Any, Any, None]]) -> None:
+        if self.ending or self.lost or self._retention_failed:
+            return
+        task = asyncio.create_task(work())
+        self._warm = task
+        self._warm_tasks.add(task)
+        task.add_done_callback(self._warm_tasks.discard)
+
+    def _warm_current(self) -> bool:
+        """Only the latest live warm task may publish context or start another request."""
+        task = asyncio.current_task()
+        return (
+            task is not None
+            and task is self._warm
+            and not task.cancelling()
+            and not self.ending
+            and not self.lost
+            and not self._retention_failed
+        )
+
+    def _cancel_warm(self) -> None:
+        # Retain every overlapping mode/prewarm task until it finishes. Do not
+        # interrupt cleanup a second time when more than one stop path runs.
+        for task in self._warm_tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
 
     async def prewarm_prompts(self) -> None:
         """Write the prompt cache for the session's prefix (rules, digest, pack) before the
@@ -1819,16 +1962,59 @@ class Session:
         mode change; the default cache lives 30 minutes on OpenAI and 5 on Claude, and the
         questions that follow keep it warm."""
         ctx = self._prompt_ctx
+        adaptive = self.settings.answer_architecture != "legacy_dual"
+        warmed: list[tuple[object, str, Mapping[str, Any], str]] = []
+        targets: list[tuple[str, str, str, LLMRequest]] = []
         for job in self.settings.prewarm_jobs:
-            req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
-            if job in ("deep", "deep_light"):
-                req = prompts.deep_pass(
-                    ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+            if adaptive:
+                route_job = (
+                    "adaptive_expert"
+                    if job == "deep" and self.settings.adaptive_expert_route is not None
+                    else job
                 )
+                expert = job in ("deep", "deep_light")
+                req = prompts.adaptive_pass(
+                    ctx, "", "(warm-up)", "other", self.settings.adaptive_max_tokens,
+                    depth="expert" if expert else "standard", expert=expert,
+                )  # fmt: skip
+                targets.append((job, route_job, "adaptive", req))
+            # The category-specific rollback uses different rules, and its deep route
+            # can use a different model. Warm the actual prefixes on configured jobs.
+            if not adaptive or self.settings.adaptive_technical_legacy:
+                req = prompts.fast_pass(
+                    ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens
+                )
+                if job in ("deep", "deep_light"):
+                    req = prompts.deep_pass(
+                        ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+                    )
+                targets.append((job, job, "legacy_dual", req))
+        for job, route_job, architecture, req in targets:
+            if not self._warm_current():
+                return
+            target = None
+            if adaptive:
+                route = next(
+                    (r for r in self.router.routes.get(route_job, ()) if not r.refusal_only), None
+                )
+                key = prompt_cache_key(req.system)
+                if route is not None and key is not None:
+                    # A failed warm never suppresses a later attempt; snapshot nested params.
+                    if any(
+                        provider is route.provider
+                        and model == route.model
+                        and params == route.params
+                        and prefix == key
+                        for provider, model, params, prefix in warmed
+                    ):
+                        continue
+                    target = (route.provider, route.model, deepcopy(route.params), key)
             started = time.monotonic()
-            done = await self.router.prewarm(job, req)
+            done = await self.router.prewarm(route_job, req)
             if done is None:
                 continue
+            if target is not None:
+                warmed.append(target)
             ms = int((time.monotonic() - started) * 1000)
             log.info(
                 "prewarmed %s on %s: %s tokens in %s ms",
@@ -1841,9 +2027,16 @@ class Session:
                 {
                     "kind": "prewarm",
                     "pass": job,
+                    "prompt_architecture": architecture,
+                    **({"request_job": route_job} if route_job != job else {}),
                     "model": done.model,
+                    "tier": done.service_tier,
                     "input_tokens": done.usage.input_tokens,
                     "cached_tokens": done.usage.cached_tokens,
+                    "reasoning_tokens": done.usage.reasoning_tokens,
+                    "cache_write_tokens": done.usage.cache_write_tokens,
+                    "cache_write_30m_tokens": done.usage.cache_write_30m_tokens,
+                    "cache_write_12h_tokens": done.usage.cache_write_12h_tokens,
                     "cost_usd": self._cost(done),
                     "latency_ms": ms,
                 }
@@ -1852,15 +2045,21 @@ class Session:
     async def _mode_changed(self, mode: str) -> None:
         """A switch between standup and meeting at a company loads that company's pack for the
         new mode; then the new prefix is prewarmed."""
+        if not self._warm_current():
+            return
         if self.info.employer_id is not None and mode in ("standup", "meeting"):
             pack = await self.manager.employer_pack(
                 self.principal.user_id, self.info.employer_id, mode, self.info.title,
                 self.info.agenda, self.info.material_ids,
             )  # fmt: skip
+            if not self._warm_current():
+                return
             if pack is not None:
                 self.set_pack(pack)
                 self._prompt_ctx = self._build_prompt_ctx()
             await self.load_sections()
+        if not self._warm_current():
+            return
         await self.prewarm_prompts()
 
     def set_pack(self, pack: SessionPack) -> None:
@@ -1983,7 +2182,9 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
-        self.answers.cancel_all()
+        self._cancel_warm()
+        if not await self._shutdown_answers(within_s=5):
+            log.error("session %s answer cancellation exceeded the shutdown deadline", self.sid)
         self.log_entry({"kind": "session.ended", "reason": reason})
         totals = self.totals()
         log.info(
@@ -2028,7 +2229,9 @@ class Session:
         self.ending = True
         self.usage_meter.stop()
         self.turns.cancel()
-        self.answers.cancel_all()
+        self._cancel_warm()
+        if not await self._shutdown_answers(within_s=2):
+            log.error("session %s answer cancellation exceeded the abandon deadline", self.sid)
         await self.writer.drain(within_s=2)
         with contextlib.suppress(*UNAVAILABLE):
             await self.svc.store.release_lease(self.sid, self.svc.task_id)
@@ -2048,6 +2251,7 @@ class Session:
         log.info("session %s moved to another task", self.sid)
         self.turns.cancel()
         self.answers.cancel_all()
+        self._cancel_warm()
         self.end_task = asyncio.create_task(self._stop_lost(self.ws))
 
     async def _stop_lost(self, ws: WebSocket | None) -> None:
@@ -2055,7 +2259,38 @@ class Session:
             await close_ws(ws, CLOSE_REPLACED, "replaced by a newer connection")
         await self._stop()
 
+    def _cancel_forced(self) -> set[asyncio.Future[Any]]:
+        pending: set[asyncio.Future[Any]] = set(self._forced)
+        for detection, call in self._forced_detections.items():
+            pending.update((detection, call))
+            # Cancel the actual classifier once. Its named wrapper finishes when the
+            # call settles; cancelling both can interrupt the child's provider cleanup,
+            # while cancelling only a wrapper that has not started can orphan the call.
+            if not call.done() and not (isinstance(call, asyncio.Task) and call.cancelling()):
+                call.cancel()
+        for task in self._forced:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        return pending
+
+    async def _drain_forced(self, pending: set[asyncio.Future[Any]], *, within_s: float) -> bool:
+        if not pending:
+            return True
+        _, unfinished = await asyncio.wait(pending, timeout=max(0, within_s))
+        return not unfinished
+
+    async def _shutdown_answers(self, *, within_s: float) -> bool:
+        deadline = time.monotonic() + within_s
+        forced = self._cancel_forced()
+        answers_stopped = await self.answers.shutdown(within_s=within_s)
+        forced_stopped = await self._drain_forced(forced, within_s=deadline - time.monotonic())
+        return answers_stopped and forced_stopped
+
     async def _stop(self) -> None:
+        self._cancel_warm()
+        # Also covers lease-loss/core-stop paths that do not call end or abandon.
+        if not await self._drain_forced(self._cancel_forced(), within_s=0.25):
+            log.warning("forced-question cancellation exceeded the stop drain bound")
         self.manager.forget(self)
         await self.seatdesk.stop()
         await self.companiondesk.stop()
@@ -2064,6 +2299,18 @@ class Session:
             task.cancel()
         await asyncio.gather(*changing, return_exceptions=True)
         self.conv.close()
+        if self.company_memory is not None:
+            memory_tasks = {
+                task
+                for lookup in self.company_memory.lookups.values()
+                for task in (lookup.fts, lookup.full)
+                if not task.done()
+            }
+            self.company_memory.close()
+            if memory_tasks:
+                _, pending = await asyncio.wait(memory_tasks, timeout=0.25)
+                if pending:
+                    log.warning("company memory cancellation exceeded the shutdown drain bound")
         for task in list(self._settling):
             task.cancel()
         if self.send_q is not None:
@@ -2177,9 +2424,11 @@ class Session:
                 await self.on_text(data_text)
 
     async def on_audio(self, data: bytes) -> None:
-        if self.ending or self._retention_failed:
+        if self.ending or self.lost or self._retention_failed:
             return
         async with self._language_lock:
+            if self.ending or self.lost or self._retention_failed:
+                return
             await self._on_audio(data)
 
     async def _on_audio(self, data: bytes) -> None:
@@ -2201,7 +2450,7 @@ class Session:
             self.them_open = frame.capture_ms
             if self.stt is not None:
                 self.stt.speech(True)
-            self.turns.on_speech_start()
+            self.turns.on_speech_start(capture_ms=frame.capture_ms)
         if frame.audio and self.stt is not None:
             await self.stt.send(frame.audio, frame.capture_ms)
         if frame.speech_end:
@@ -2212,7 +2461,7 @@ class Session:
                 self._check_mic()
             if self.stt is not None:
                 self.stt.speech(False)
-            self.turns.on_speech_end()
+            self.turns.on_speech_end(capture_ms=frame.capture_ms)
             if self.stt is not None:
                 await self.stt.finalize()
 
@@ -2261,7 +2510,7 @@ class Session:
         await self.handle(message)
 
     async def handle(self, message: Any) -> None:
-        if self.ending or self._retention_failed:
+        if self.ending or self.lost or self._retention_failed:
             return
         if isinstance(message, models.SessionSetLanguage):
             # A transport disconnect must not leave the provider transaction half-applied.
@@ -2271,6 +2520,8 @@ class Session:
             await asyncio.shield(task)
             return
         async with self._language_lock:
+            if self.ending or self.lost or self._retention_failed:
+                return
             await self._handle(message)
 
     async def _handle(self, message: Any) -> None:
@@ -2313,11 +2564,21 @@ class Session:
                 self._prompt_ctx = self._build_prompt_ctx()
                 self.writer.set_state(mode=message.mode)
                 self.log_entry({"kind": "mode", "mode": message.mode})
-                self._warm = asyncio.create_task(self._mode_changed(message.mode))
+                self._start_warm(lambda: self._mode_changed(message.mode))
             case models.AnswerStyleSet():
                 self.info.answer_style = message.answer_style
-                self.writer.set_state(answer_style=message.answer_style)
-                self.log_entry({"kind": "answer_style", "answer_style": message.answer_style})
+                if message.response_length is not None:
+                    self.info.response_length = message.response_length
+                self.writer.set_state(
+                    answer_style=message.answer_style, response_length=self.info.response_length
+                )
+                self.log_entry(
+                    {
+                        "kind": "answer_style",
+                        "answer_style": message.answer_style,
+                        "response_length": self.info.response_length,
+                    }
+                )
             case models.SharingSet():
                 if message.on and self.private_context_account_id:
                     self.error(
@@ -2516,6 +2777,7 @@ class Session:
             question_type=q.qtype,
             confidence=1.0,
             speculative=False,
+            answer_strategy="legacy_dual",
         )
         self.answers.add(q)
         self.answers.confirm(qid, q.text, None)
@@ -2532,17 +2794,41 @@ class Session:
         if q is None:
             return
         reply = respond and self.info.mode in prompts.GROUP_MODES
+        # The first detection identifies the button anchor before held text is released.
+        q.forced, q.confidence, q.detector_ms = True, 1.0, None
         self.release_question(qid, text, Detection("answer", "respond" if reply else "other"),
                               speculative=False)  # fmt: skip
-        q.forced, q.confidence, q.detector_ms = True, 1.0, None
         wait_s = self.settings.force_type_wait_ms / 1000
+        call = self._named_detections.get(detection, detection)
+        self._forced_detections[detection] = call
+
+        def settled(future: asyncio.Future[Detection]) -> None:
+            if not future.cancelled():
+                future.exception()  # Observe failures even if the typing waiter was cancelled.
+            if detection.done() and call.done():
+                self._forced_detections.pop(detection, None)
+
+        detection.add_done_callback(settled)
+        if call is not detection:
+            call.add_done_callback(settled)
 
         async def typed() -> None:
-            await asyncio.wait({detection}, timeout=wait_s)
+            try:
+                await asyncio.wait({detection}, timeout=wait_s)
+            except asyncio.CancelledError:
+                if not call.done() and not (isinstance(call, asyncio.Task) and call.cancelling()):
+                    call.cancel()
+                raise
+            if self.ending or self.lost or self._retention_failed:
+                return
+            q = self.answers.questions.get(qid)
+            if q is None:
+                return
             ok = detection.done() and not detection.cancelled() and not detection.exception()
             found = detection.result() if ok else None
             if found is not None and found.fires() and not reply:
                 q.qtype, q.detector_ms, q.depth = found.qtype, found.latency_ms, found.depth
+                q = self.answers.reconcile_strategy(q)
             if not (q.cancelled or q.discarded):
                 self.answers.confirm(qid, q.text, None)
                 self.conv.question(str(qid), q.text, self.capture_now)
@@ -3103,6 +3389,7 @@ class SessionManager:
             resume_version_id=resume_version_id,
             resume_is_base=resume_is_base,
             answer_style=msg.answer_style or "bullets",
+            response_length=msg.response_length or "default",
             no_call=bool(msg.no_call),
             spoken_language=spoken_language,
         )
@@ -3397,6 +3684,7 @@ class SessionManager:
             resume_version_id=UUID(rv) if rv else None,
             resume_is_base=state.get("resume_base") == "1",
             answer_style=state.get("answer_style") or "bullets",
+            response_length=state.get("response_length") or "default",
             no_call=state.get("no_call") == "1",
             spoken_language=state.get("spoken_language") or "en",
         )

@@ -1,0 +1,269 @@
+{
+  "scope": "Local production UI final sentence-chunk callback to DOM commit and second animation frame; not provider latency, native IPC transit, physical paint or end-to-end speech latency.",
+  "browser": "158.0.4370.33",
+  "measured_trials": 480,
+  "warmups": 60,
+  "summary": [
+    {
+      "prior_answers": 0,
+      "condition": "bounded_fixture",
+      "baseline": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 0.6,
+          "p90": 1,
+          "p95": 1.2
+        },
+        "paint_opportunity_ms": {
+          "p50": 24.2,
+          "p90": 27.1,
+          "p95": 27.5
+        }
+      },
+      "candidate": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 0.6,
+          "p90": 0.9,
+          "p95": 1.1
+        },
+        "paint_opportunity_ms": {
+          "p50": 24.4,
+          "p90": 26.8,
+          "p95": 27.1
+        }
+      }
+    },
+    {
+      "prior_answers": 20,
+      "condition": "bounded_fixture",
+      "baseline": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 0.8,
+          "p90": 1.3,
+          "p95": 1.5
+        },
+        "paint_opportunity_ms": {
+          "p50": 22.3,
+          "p90": 24.5,
+          "p95": 24.9
+        }
+      },
+      "candidate": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 0.7,
+          "p90": 1,
+          "p95": 1.1
+        },
+        "paint_opportunity_ms": {
+          "p50": 21.3,
+          "p90": 23.3,
+          "p95": 23.6
+        }
+      }
+    },
+    {
+      "prior_answers": 100,
+      "condition": "stress",
+      "baseline": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 2.2,
+          "p90": 3.3,
+          "p95": 3.4
+        },
+        "paint_opportunity_ms": {
+          "p50": 29,
+          "p90": 31.4,
+          "p95": 31.7
+        }
+      },
+      "candidate": {
+        "n": 80,
+        "dom_ms": {
+          "p50": 0.9,
+          "p90": 1.6,
+          "p95": 2.5
+        },
+        "paint_opportunity_ms": {
+          "p50": 29.6,
+          "p90": 32.1,
+          "p95": 33.3
+        }
+      }
+    }
+  ],
+  "errors": [],
+  "limitations": [
+    "One fixed technical sentence and fixed completed history; no population or semantic quality inference.",
+    "100 prior answers is a stress case.",
+    "Second animation frame is a paint opportunity proxy, not a measured visual presentation timestamp; no stable frame-latency improvement established.",
+    "Initial exploration files retained separately; one candidate exploratory replay ran alongside tests and is excluded from this controlled A/B/B/A aggregate.",
+    "Repeated browser fixtures on one machine, no confidence interval or generalization to all hardware."
+  ],
+  "execution_order": [
+    "baseline-abba-0",
+    "candidate-abba-1",
+    "candidate-abba-2",
+    "baseline-abba-3"
+  ],
+  "raw_artifacts": {
+    "baseline-abba-0.json": {
+      "sha256": "28dce087fb373ead0077633718a06ad064d594e80f9238bb5227655abea2bd4a",
+      "storage": "private local render evidence directory"
+    },
+    "candidate-abba-1.json": {
+      "sha256": "fca01d79b55b166c6e05206822c6891242ebd8d6d44a141f03157c6827fe268c",
+      "storage": "private local render evidence directory"
+    },
+    "candidate-abba-2.json": {
+      "sha256": "2265aaa4bc917359ff087912194fd1211f198fa08f911b5f3fd1157eeacb4ccd",
+      "storage": "private local render evidence directory"
+    },
+    "baseline-abba-3.json": {
+      "sha256": "e923faee64a1cf4670a26cd4f1f817295b6c990165d9e6b359fa49b9cc90217a",
+      "storage": "private local render evidence directory"
+    },
+    "baseline-layout-check.json": {
+      "sha256": "01266e7daa80ff898b0f08b074d70bafa96ae029c66aa84e39274f26c0e8460f",
+      "storage": "private local render evidence directory"
+    },
+    "candidate-layout-check.json": {
+      "sha256": "df506f02a4101f084baaef4360aff8256aa300be2f028db5c85b9bcac547afdd",
+      "storage": "private local render evidence directory"
+    },
+    "visual-candidate-layout/metrics.json": {
+      "sha256": "d73c36bf3d8bdc6922c18ea8193eebdbff606ad111bb53739c49571bdde53328",
+      "storage": "private local render evidence directory"
+    }
+  },
+  "configuration": {
+    "viewport_px": [
+      1000,
+      700
+    ],
+    "headless": true,
+    "production_build": true,
+    "history_counts": [
+      0,
+      20,
+      100
+    ],
+    "samples_per_condition_per_run": 40,
+    "warmups_per_condition_per_run": 5,
+    "primary_layout": "compact",
+    "mock_ipc": true,
+    "provider_calls": 0,
+    "known_useful_sentence": "I use Redis to share expiring cache entries across workers.",
+    "timing_boundary": "delivery of final sentence chunk after a partial sentence was already rendered",
+    "counterbalance": "A/B/B/A serial; no test run started concurrently by the UI worker",
+    "quantiles": "nearest rank; pool both runs of each build for each history count",
+    "baseline_overlay_git_blob": "02bc4d8922da4aec3636f0ba46f0ddff5c499b14"
+  },
+  "production_builds": {
+    "baseline": {
+      "note": "preserved pre-change production build",
+      "artifact_sha256": {
+        "assets/index-DSmHB4WR.css": "130c4b745263c9c5848187f43fdf153e4594ec1bf6596460877007fe477effe0",
+        "assets/Overlay-C6ZEQfMG.js": "6e725abaa78daa535fe88d1178869c857da31bcb48980c45d17d9fc267113fa8",
+        "assets/Overlay-DYJyJA0l.js": "2fdcd4ecee2d323dfff2532150423ef897c9dd9483efba1efe5af58ffa381af8",
+        "index.html": "642770d75cddadeb9b51ac84fb20cce0f697c1611f31c2ea480e47cbca191e41"
+      }
+    },
+    "candidate": {
+      "note": "memoization only, before stacked-layout fix",
+      "artifact_sha256": {
+        "assets/index-DSmHB4WR.css": "130c4b745263c9c5848187f43fdf153e4594ec1bf6596460877007fe477effe0",
+        "assets/Overlay-C3EbH6bV.js": "23f904d5952387b314d8bd7d96e9da4cde940f0f0af1fd91536f0169642ddc6b",
+        "assets/Overlay-E2ZnO5p_.js": "fcb351fd2ef9175c955db603dbd22580181d8a03474f9a4f6e029057b4f022f4",
+        "index.html": "6862a85e82015a1b235394ac17d7c41f6b84dc06cdabdfd7e00a1f44f767432a"
+      }
+    },
+    "candidate-layout": {
+      "note": "memoization and stacked-layout fix",
+      "artifact_sha256": {
+        "assets/index-DKtBPzDp.css": "db7bbc20363f888e931aa7b8986c126241d94af97f886b4af12327c644a52331",
+        "assets/Overlay-B1NCgm9-.js": "f12d61b3c6830b4f86c10b3ab050165d3d0f42fb10323ae44e16d94cf09076c9",
+        "assets/Overlay-BV06UPLo.js": "c696c5bed8695778644d8031615707922b6a78c96c388016713016c25328354c",
+        "index.html": "95f2d5774ef229ff632f15a9d65162e856e54fa0d4a6aeb02d3e6b92c036eaf2"
+      }
+    }
+  },
+  "layout_regression": {
+    "baseline": [
+      {
+        "layout": "split",
+        "passed": true,
+        "first_sentence_shift_px": 0,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      },
+      {
+        "layout": "compact",
+        "passed": true,
+        "first_sentence_shift_px": 0,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      },
+      {
+        "layout": "stacked",
+        "passed": false,
+        "first_sentence_shift_px": 147.828125,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      }
+    ],
+    "candidate": [
+      {
+        "layout": "split",
+        "passed": true,
+        "first_sentence_shift_px": 0,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      },
+      {
+        "layout": "compact",
+        "passed": true,
+        "first_sentence_shift_px": 0,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      },
+      {
+        "layout": "stacked",
+        "passed": true,
+        "first_sentence_shift_px": 0,
+        "manual_scroll_preserved": true,
+        "horizontal_overflow": false
+      }
+    ],
+    "scope": "One long stream per layout, twelve appended paragraphs plus a final chunk/completion. Baseline stacked geometry assertion fails as expected; corrected candidate passes. Geometry replay timing samples are excluded from latency aggregates."
+  },
+  "preference_checks": {
+    "combinations": 6,
+    "formats": [
+      "bullets",
+      "paragraph"
+    ],
+    "lengths": [
+      "default",
+      "concise",
+      "detailed"
+    ],
+    "browser_observed": "Each selected pair persisted; prior answer text remained unchanged; no expand/answer-now call was invoked. Native transport/server preference handling covered elsewhere.",
+    "narrow_viewport_px": [
+      430,
+      760
+    ],
+    "horizontal_overflow": false,
+    "stale_cancelled_answer_visible": false
+  },
+  "harness": {
+    "path": "apps/desktop/scripts/answer-render-benchmark.mjs",
+    "sha256": "ebbdf5d53ffaeeed2079971f62113fb66249585754290ecd5eac0b7f649b7f27",
+    "requirements": "Node.js, Playwright Core via PLAYWRIGHT_MODULE or node module resolution, Chromium/Edge executable; separately served production build",
+    "command_template": "node apps/desktop/scripts/answer-render-benchmark.mjs --url http://127.0.0.1:<port> --browser <chromium-executable> --label <build> --samples 40 --history 0,20,100 --output <private-json>",
+    "geometry_check": "Add --check-layout; nonzero exit if a layout shifts the first sentence by at least one pixel, changes manual scroll position, or overflows horizontally."
+  }
+}

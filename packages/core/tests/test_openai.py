@@ -123,8 +123,20 @@ def test_openai_model_names_in_pricing_and_routing() -> None:
     assert model_family("us.anthropic.claude-sonnet-5-5") == "claude-sonnet-5-5"
     prices = {"gpt-6-luna": ModelPrice(input=0.1, cached=0.01, output=0.5)}
     assert missing_prices(["gpt-6-luna", "gpt-6.1-sol"], prices) == ["gpt-6.1-sol"]
-    # 1,568 input of which 1,565 cached, 71 output (the recorded fast pass).
+    # The historical token summary omitted writes; it cannot prove the billed cost.
     cost = cost_usd("gpt-6-luna", "standard", 1568, 1565, 71, prices, {"standard": 1.0})
+    assert cost is None
+    # A response that explicitly reports no writes has a complete token estimate.
+    cost = cost_usd(
+        "gpt-6-luna",
+        "standard",
+        1568,
+        1565,
+        71,
+        prices,
+        {"standard": 1.0},
+        cache_write_tokens=0,
+    )
     assert cost is not None
     assert float(cost) == pytest.approx((3 * 0.1 + 1565 * 0.01 + 71 * 0.5) / 1e6, abs=1e-6)
 
@@ -261,3 +273,49 @@ async def test_claude_providers_warm_their_connection() -> None:
     await AnthropicProvider("anthropic", direct).warm("claude-haiku-4-5")
     await AnthropicProvider("bedrock", mantle).warm("anthropic.claude-haiku-4-5")
     assert calls == [("models.list", {"limit": 1}), ("count_tokens", "anthropic.claude-haiku-4-5")]
+
+
+async def test_provider_connect_timeout_is_explicit_and_sdk_retries_stay_disabled() -> None:
+    from copilot_core.llm import AnthropicProvider, OpenAIProvider
+    from copilot_core.providers import close_providers, make_providers
+
+    assert settings().llm_connect_timeout_s == 2.0
+
+    for timeout in (2.0, 0.75):
+        s = settings(
+            llm_providers=["openai", "anthropic"],
+            openai_api_key="local-test-key",
+            anthropic_api_key="local-test-key",
+            llm_connect_timeout_s=timeout,
+        )
+        providers = make_providers(s)
+        clients = [
+            provider.client
+            for provider in providers
+            if isinstance(provider, AnthropicProvider | OpenAIProvider)
+        ]
+        assert len(clients) == 2
+        for client in clients:
+            assert isinstance(client.timeout, httpx2.Timeout)
+            assert client.timeout.connect == timeout
+        assert all(client.max_retries == 0 for client in clients)
+        await close_providers(providers)
+        assert all(client.is_closed() for client in clients)
+    with pytest.raises(ValueError, match="llm_connect_timeout_s"):
+        settings(llm_connect_timeout_s=0)
+
+
+async def test_close_providers_deduplicates_shared_clients() -> None:
+    from copilot_core.llm import OpenAIProvider
+    from copilot_core.providers import close_providers
+
+    class Client:
+        closed = 0
+
+        async def close(self) -> None:
+            self.closed += 1
+
+    client = Client()
+    providers = [OpenAIProvider("openai", client)] * 2  # pyright: ignore[reportArgumentType]
+    await close_providers(providers)
+    assert client.closed == 1

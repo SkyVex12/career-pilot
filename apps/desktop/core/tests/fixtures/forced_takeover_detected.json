@@ -1,0 +1,10 @@
+{
+  "type": "question.detected",
+  "seq": 1,
+  "question_id": "0192f3c4-1d0a-7c55-b2e1-77c0a9d4e210",
+  "text": "How should we design this queue?",
+  "question_type": "other",
+  "confidence": 1,
+  "speculative": false,
+  "answer_strategy": "adaptive"
+}

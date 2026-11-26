@@ -1,4 +1,4 @@
-import { useAnswerStyle } from "./viewPreferences";
+import { RESPONSE_LENGTHS, useAnswerStyle, useResponseLength } from "./viewPreferences";
 import { NotificationVisibility } from "./ui/NotificationScope";
 import { CompanionDevices } from "./CompanionDevices";
 import { prepareForRealCall } from "./practiceAudio";
@@ -13,7 +13,7 @@ import { LiveCallLanguage } from "./LiveCallLanguage";
 import { LiveUsage } from "./Usage";
 import { SignIn, signInWays } from "./SignIn";
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState } from "react";
-import type { AnswerStyle, Mode } from "@copilot/protocol";
+import type { AnswerStyle, Mode, ResponseLength } from "@copilot/protocol";
 import { api, rest, POLL_READ, type ApplicationDetail, type CareerOsConnection, type CompanyDocument, type DeviceInfo, type Employer, type LiveSession, type PackState, type ResumeVersion, type Settings } from "./api";
 import { useDataActivity, usePolling } from "./usePolling";
 import { parseTarget, upcoming } from "./catalog";
@@ -28,7 +28,7 @@ import { useWorkspaceCallBusy, useWorkspaceCompactWindow } from "./Shell";
 import { CareerOsConnect } from "./CareerOs";
 import { LiveNow, MODE_LABEL } from "./calls";
 import { GuestInvites, GuestPanel, Watching } from "./seats";
-import { STOPPED, postCallFor, type SessionView } from "./session";
+import { STOPPED, stopMessage, postCallFor, type SessionView } from "./session";
 import { clock } from "./postcall";
 import { isMac } from "./platform";
 import { defaultEmployer, packLabel } from "./workday";
@@ -269,6 +269,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const [spokenLanguage, setSpokenLanguage] = useState("en");
   const [languageReady, setLanguageReady] = useState(false);
   const [answerStyle, setAnswerStyle] = useAnswerStyle(running);
+  const [responseLength, setResponseLength] = useResponseLength(running);
   const shown = useShowCount(active);
   const catalog = useCatalog(tokenSet && active);
   const reloadCatalog = catalog.reload;
@@ -336,6 +337,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const savedDetail = (value: ApplicationDetail) => { setDetail(value); catalog.includeApplication(value); };
   const changeMode = (value: Mode) => { setMode(value); if (running) api.setMode(value).catch(() => undefined); };
   const changeStyle = (value: AnswerStyle) => { void setAnswerStyle(value).catch(error => setMessage(String(error))); };
+  const changeLength = (value: ResponseLength) => { void setResponseLength(value).catch(error => setMessage(String(error))); };
   const start = async () => {
     if (busy || joining) return;
     if (!languageReady) { toast({ tone: "error", text: "Choose an available language in Customize before starting." }); return; }
@@ -349,7 +351,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
       if (mini.mode !== "full" && !await mini.change("full")) return;
       await prepareForRealCall();
       await api.startSession({ mode: setupMode, ...picked, meeting_title: meetingTitle, employer_id: company, agenda: setupMode === "meeting" ? agenda.trim() || null : null,
-        material_ids: company ? materialIds : [], platform: "other", store_transcript: consent, answer_style: answerStyle, spoken_language: spokenLanguage, no_call: false });
+        material_ids: company ? materialIds : [], platform: "other", store_transcript: consent, answer_style: answerStyle, response_length: responseLength, spoken_language: spokenLanguage, no_call: false });
       if (planned.length) setPendingInvites({ beforeId, scope, guests: planned });
     } catch (error) { setMessage(String(error)); }
     finally { setBusy(false); }
@@ -357,9 +359,9 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
   const endOther = async () => { setMessage(null); try { setMessage(`${await api.endOtherSession()}. You can start now.`); } catch (error) { setMessage(String(error)); } };
   const employer = work.employers?.find(e => e.id === employerId);
   const forWhat = atWork ? employer?.name ?? "No company" : application ? `${application.company} · ${application.role}` : "Base resume";
-  const stopped = session.stopped && ["unauthorized", "session_active", "no_minutes"].includes(session.stopped) && !running ? session.stopped : null;
+  const stopped = session.stopped && ["unauthorized", "session_active", "no_minutes", "retention_failed", "end_unconfirmed"].includes(session.stopped) && !running ? session.stopped : null;
   if (session.seat && running) return <Watching s={session} dispatch={dispatch ?? (() => undefined)} />;
-  if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
+  if (running) return <Live session={session} mode={mode} onMode={changeMode} answerStyle={answerStyle} onAnswerStyle={changeStyle} responseLength={responseLength} onResponseLength={changeLength} forWhat={forWhat} consent={consent} message={message} onMessage={setMessage} />;
   const disabled = busy || joining;
   const selectedResume = application ? (detail?.id === application.id ? detail : application).resume : baseResume.resume;
   const resumeSummary = selectedResume ? `Resume · ${selectedResume.label} · ${resumeStatusLabel(selectedResume.status)}`
@@ -380,7 +382,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
           <div className="call-notices" hidden={mini.mode !== "full" || mini.busy}>
             {mini.error && <Banner tone="danger">{mini.error}</Banner>}
             {tokenSet && <LiveNow running={running} liveId={null} onOpen={onOpenLive} />}
-            {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined} />}
+            {stopped && <Banner tone="warning" title={STOPPED[stopped]} action={stopped === "session_active" ? <Button size="sm" onClick={endOther}>End the other call</Button> : stopped === "unauthorized" ? <Button size="sm" onClick={onSettings}>Open settings</Button> : undefined}>{stopMessage(stopped)}</Banner>}
             {message && <Banner tone="danger">{message}</Banner>}
           </div>
           <div className="call-setup-grid">
@@ -425,7 +427,7 @@ function Ready({ session, dispatch, tokenSet, environment, signedInAs, settings,
             </section>
             <div className="call-optional-settings">
               <CallLanguage onReady={setLanguageReady} value={spokenLanguage} onChange={setSpokenLanguage} disabled={disabled}
-                answerFormat={<div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullets or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullets"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div>}
+                answerFormat={<><div className="customize-row"><span className="customize-label">Answers<HelpTip label="Answer format">Choose bullets or paragraphs for suggested answers.</HelpTip></span><div className="customize-control"><SegmentedControl label="Answer format" value={answerStyle} options={[["bullets", "Bullets"], ["paragraph", "Paragraphs"]] as const} disabled={disabled} onChange={changeStyle} /></div></div><div className="customize-row"><span className="customize-label">Response length<HelpTip label="Response length">Default adapts to the question. Concise keeps it brief; Detailed includes more explanation.</HelpTip></span><div className="customize-control"><SegmentedControl label="Response length" value={responseLength} options={RESPONSE_LENGTHS} disabled={disabled} onChange={changeLength} /></div></div></>}
               >
                 <GuestPicker scope={scope} selected={guests} onChange={setGuests} disabled={disabled} />
                 <div className="customize-row"><span className="customize-label">Transcript<HelpTip label="Transcript">Save a transcript for review after the call, with everyone’s agreement.</HelpTip></span><div className="customize-control"><Checkbox checked={consent} onChange={setConsent} disabled={disabled} label="Save transcript" /></div></div>
@@ -474,6 +476,8 @@ function Live({
   onMode,
   answerStyle,
   onAnswerStyle,
+  responseLength,
+  onResponseLength,
   forWhat,
   consent,
   message,
@@ -484,6 +488,8 @@ function Live({
   onMode: (m: Mode) => void;
   answerStyle: AnswerStyle;
   onAnswerStyle: (s: AnswerStyle) => void;
+  responseLength: ResponseLength;
+  onResponseLength: (length: ResponseLength) => void;
   forWhat: string;
   consent: boolean;
   message: string | null;
@@ -553,8 +559,11 @@ function Live({
           <Field label="Mode">
             <SegmentedControl label="Mode" value={atWorkMode(mode) ? "meeting" : "interview"} options={MODES} onChange={onMode} />
           </Field>
-          <Field label="Detailed answer" hint="Changes apply to the next answers.">
-            <SegmentedControl label="Detailed answer" value={answerStyle} options={ANSWER_STYLES} onChange={onAnswerStyle} />
+          <Field label="Answer format" hint="Changes apply to the next answers.">
+            <SegmentedControl label="Answer format" value={answerStyle} options={ANSWER_STYLES} onChange={onAnswerStyle} />
+          </Field>
+          <Field label="Response length" hint="Changes apply to the next answers.">
+            <SegmentedControl label="Response length" value={responseLength} options={RESPONSE_LENGTHS} onChange={onResponseLength} />
           </Field>
         </div>
         <LiveCallLanguage key={session.sessionId} session={session} />

@@ -847,3 +847,45 @@ async def test_the_log_names_the_pack_and_counts_the_detector(env, caplog) -> No
     assert "keyterms=0" in started
     ended = next(r.getMessage() for r in caplog.records if "session ended" in r.getMessage())
     assert "detector={'decided': 2, 'cached': 0, 'cancelled': 0, 'failed': 0" in ended
+
+
+async def test_session_end_retains_delayed_provider_cancellation_before_releasing_lease(env):
+    closing, closed = asyncio.Event(), asyncio.Event()
+
+    class SlowCloseProvider(ScriptedProvider):
+        async def stream(self, model, req, params):
+            try:
+                async for chunk in super().stream(model, req, params):
+                    yield chunk
+            finally:
+                if closing.is_set():
+                    await asyncio.sleep(0.05)
+                    closed.set()
+
+    def reply(job, req):
+        if job == "fast":
+            return Reply(["An initial answer. ", "More detail."], chunk_delay_s=30)
+        return default_reply(job, req)
+
+    env.providers = [SlowCloseProvider("anthropic", reply)]
+    async with GatewayServer(env.services()) as gateway:
+        client = ProtocolClient(gateway.url)
+        await client.start()
+        await client.say("How did you scale the ledger?")
+        await client.wait_type("answer.delta", pass_="fast")
+        session = next(iter(gateway.manager.sessions.values()))
+        closing.set()
+        await client.send({"type": "session.end"})
+        assert await client.closed() == 1000
+        assert closed.is_set()
+        assert not session.writer.pending()
+        assert not session.answers._tasks
+        retained = [
+            json.loads(fields[b"e"])
+            for _, fields in await env.client().xrange(keys.sess_log(client.session_id))
+        ]
+        kinds = [row["kind"] for row in retained]
+        assert kinds.index("pass_cancelled") < kinds.index("session.ended")
+        assert any(
+            row["kind"] == "provider_attempt" and row["status"] == "cancelled" for row in retained
+        )

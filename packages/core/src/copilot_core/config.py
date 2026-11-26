@@ -13,7 +13,7 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from copilot_core.languages import DEFAULT_CALL_LANGUAGES, validate_language
-from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
+from copilot_core.pricing import DEFAULT_PRICES, ModelPrice, default_tiers, model_key
 
 LLMProviderName = Literal["bedrock", "anthropic", "openai"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -175,15 +175,21 @@ class CoreSettings(BaseSettings):
             "llm_keepalive_s", "COPILOT_LLM_KEEPALIVE_S", "COPILOT_OPENAI_KEEPALIVE_S"
         ),
     )
+    # Separate transport connection setup from the router's first-token deadline. Keep the
+    # existing 2 s default; an outage is not evidence that waiting longer improves live latency.
+    llm_connect_timeout_s: float = Field(default=2.0, gt=0)
     # HTTP/2: the fast and deep passes share one warm connection, and a route given up at
     # its first-token timeout cancels only its stream, not the connection the retry needs.
     openai_http2: bool = True
+    # Version-pinned stream cancellation fix. Direct H2 only; proxy mounts use native H1.
+    # Explicit False restores the native SDK path; openai_http2=False also bypasses it.
+    openai_http2_cancel_fix: bool = True
 
     # Prices per million tokens, for answers.cost_usd (copilot_core.pricing). JSON; entries
     # given are merged over the defaults, e.g.
     # {"claude-haiku-4-5": {"input": 1, "cached": 0.1, "output": 5}}.
     model_prices: dict[str, ModelPrice] = Field(default_factory=lambda: dict(DEFAULT_PRICES))
-    tier_price_multipliers: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_TIERS))
+    tier_price_multipliers: dict[str, float] = Field(default_factory=default_tiers)
 
     # Embeddings for prepared-answer matching, always 1024 dimensions. "auto" uses Bedrock
     # (Cohere) when bedrock is a model provider, else OpenAI when openai is one, and turns
@@ -314,7 +320,7 @@ class CoreSettings(BaseSettings):
     @field_validator("tier_price_multipliers", mode="after")
     @classmethod
     def _merge_tiers(cls, value: dict[str, float]) -> dict[str, float]:
-        return {**DEFAULT_TIERS, **value}
+        return {**default_tiers(), **value}
 
     @field_validator(
         "llm_providers",

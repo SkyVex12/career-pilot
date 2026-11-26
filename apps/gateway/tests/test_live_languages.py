@@ -450,7 +450,9 @@ async def test_cancel_during_prepared_stream_adoption_closes_the_owned_socket():
     assert control.connects == 1
 
 
-async def test_language_boundary_terminates_answer_cancelled_before_first_coroutine_step():
+async def test_language_boundary_terminates_answer_cancelled_before_first_coroutine_step(
+    settings_factory,
+):
     from types import SimpleNamespace
     from typing import Any, cast
 
@@ -459,6 +461,7 @@ async def test_language_boundary_terminates_answer_cancelled_before_first_corout
 
     events = []
     host = SimpleNamespace(
+        settings=settings_factory(),
         emit=lambda model, **fields: events.append((model, fields)),
         log_entry=lambda entry: None,
     )

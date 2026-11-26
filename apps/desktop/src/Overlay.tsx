@@ -13,7 +13,7 @@ import { ToastProvider } from "./ui/Overlays";
 // The transcript pane (split) keeps following its newest line. Text size steps with A-/A+ or
 // Ctrl+plus/minus/0; compact shows the answers only. Window comfort settings are shared with
 // the main workspace; Ask and Answer remain available below the conversation.
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, inTauri, onOverlayPrefs, rest, type OverlayPrefs, type SessionDetail } from "./api";
 import { Icon } from "./ui/Icon";
@@ -139,6 +139,7 @@ export default function Overlay() {
 
 function OverlayContent() {
   const [s, dispatch] = useSession();
+  const requestExpansion = useCallback((id: string) => dispatch({ type: "deep_requested", id }), [dispatch]);
   const { opacity, compact, clickThrough, onTop, hotkeys, setCompact, setOpacityLive, setOnTop } = useOverlayPrefs();
   const view = useViewPrefs();
   const stepText = view.stepText;
@@ -209,7 +210,7 @@ function OverlayContent() {
         live
         readOnly={guest}
         meLabel={guest ? host : undefined}
-        onExpand={(id) => dispatch({ type: "deep_requested", id })}
+        onExpand={requestExpansion}
         emptyAnswers={
           guest
             ? `Watching ${host}'s call. Answers appear here as ${host} gets them.`
@@ -361,7 +362,7 @@ export function ConversationView({
   const scale = { "--ov-scale": textScale } as CSSProperties;
   const nowId = live ? (questions[questions.length - 1]?.id ?? null) : null;
   const card = (q: QuestionView) => (
-    <QuestionCard key={q.id} q={q} now={q.id === nowId} compact={compact} onExpand={() => onExpand?.(q.id)} past={ratings ? { rating: ratings[q.id] ?? null } : null} readOnly={readOnly} />
+    <QuestionCard key={q.id} q={q} now={q.id === nowId} compact={compact} onExpand={onExpand} past={ratings !== undefined} readOnly={readOnly} />
   );
   const answersList = (list: QuestionView[]) =>
     list.length === 0 ? (
@@ -396,7 +397,7 @@ export function ConversationView({
           {shown.length === 0 && !now ? <p className="ov-empty">{emptyAnswers}</p> : <Flow items={shown} card={card} meLabel={meLabel} />}
         </ScrollPane>
         {now && (
-          <section className="ov-now-pinned" aria-label="Current suggestion">
+          <section className={cx("ov-now-pinned", isAdaptiveQuestion(now) && "is-adaptive")} aria-label="Current suggestion">
             {card(now)}
           </section>
         )}
@@ -448,7 +449,14 @@ function AnswersPane({ title, paneRef, newestId, children }: { title?: string; p
   };
   return (
     <section className="ov-pane ov-pane-answers" aria-label={title ?? "Suggestions"}>
-      {title && <h2 className="ov-pane-head">{title}</h2>}
+      <div className="ov-answer-head">
+        {title && <h2 className="ov-pane-head">{title}</h2>}
+        {unseen && (
+          <button type="button" className="ov-jump ov-jump-top" onClick={toTop}>
+            New answer ↑
+          </button>
+        )}
+      </div>
       <div
         className="ov-pane-body"
         ref={paneRef}
@@ -458,11 +466,6 @@ function AnswersPane({ title, paneRef, newestId, children }: { title?: string; p
       >
         {children}
       </div>
-      {unseen && (
-        <button type="button" className="ov-jump ov-jump-top" onClick={toTop}>
-          New answer ↑
-        </button>
-      )}
     </section>
   );
 }
@@ -555,13 +558,20 @@ type PassState = { icon: string; text: string; tone: "wait" | "live" | "done" | 
 /** What a pass is doing, in words. */
 export function passState(p: PassView, kind: "fast" | "deep"): PassState {
   if (p.error === "cancelled") return { icon: "⏹", text: "Stopped for a newer question", tone: "warn" };
+  if (p.error === "incomplete_stream" || p.error === "stream_order") return { icon: "⚠", text: "Answer incomplete · some content did not arrive", tone: "warn" };
   if (p.error) return { icon: "⚠", text: `Failed (${p.error})`, tone: "warn" };
   if (p.done) return { icon: "✓", text: p.source === "prepared" ? "Done · prepared" : "Done", tone: "done" };
   if (p.text) return { icon: "◌", text: "Writing", tone: "live" };
   return { icon: "◌", text: kind === "fast" ? "Thinking" : "Queued", tone: "wait" };
 }
 
-function QuestionCard({
+function isAdaptiveQuestion(q: QuestionView): boolean {
+  return !isScreenQuestion(q) && q.answerStrategy !== undefined && q.answerStrategy !== "legacy_dual";
+}
+
+// The reducer preserves unchanged question objects. Streaming a new answer should not
+// reparse every completed answer or syntax-highlight historical code on each chunk.
+const QuestionCard = memo(function QuestionCard({
   q,
   now,
   compact,
@@ -575,15 +585,17 @@ function QuestionCard({
   /** The newest question: the largest type, in the fixed place. */
   now: boolean;
   compact: boolean;
-  onExpand: () => void;
+  onExpand?: (id: string) => void;
   /** A past call (History): nothing can be asked any more. */
-  past: { rating: "up" | "down" | null } | null;
+  past: boolean;
 }) {
+  const requestExpansion = useCallback(() => onExpand?.(q.id), [onExpand, q.id]);
   // A screenshot's question (coding mode): its answer and its code, as code and Markdown.
   const screen = isScreenQuestion(q);
+  const adaptive = isAdaptiveQuestion(q);
   // Code is drawn as code: a screenshot's answers, and a follow-up's new code ("write it in
   // Java") in an otherwise spoken answer.
-  const textOf = (text: string) => (screen || text.includes("```") ? CodeAnswer : AnswerText);
+  const textOf = (text: string) => (screen || text.includes("```") || text.includes("~~~") ? CodeAnswer : AnswerText);
   const FastText = textOf(q.fast.text);
   const DeepText = textOf(q.deep.text);
   // A screen's code pass runs only when a task needs code or an exact output: its section
@@ -599,7 +611,7 @@ function QuestionCard({
   const holdFast = !q.fast.done || (deepStarted && !q.deep.done);
 
   const expand = () => {
-    onExpand();
+    requestExpansion();
     api.expandAnswer(q.id).catch(() => undefined);
   };
 
@@ -612,6 +624,7 @@ function QuestionCard({
       {screen && <ShotStrip questionId={q.id} />}
       {q.screen && <ScreenTasks reading={q.screen} />}
 
+      {adaptive ? <AdaptiveAnswer q={q} onExpand={requestExpansion} canExpand={!past && !readOnly} compact={compact} /> : <>
       <div role="group" className={cx("points pass pass-fast", holdFast && "is-held", screen && "is-code")} aria-label={screen ? "Answer" : "Talking points"}>
         {q.fast.text && <FastText text={q.fast.text} streaming={!q.fast.done} />}
         <PassStatus state={fast} />
@@ -644,7 +657,9 @@ function QuestionCard({
         )
       )}
 
-      {!compact && q.fast.refs.length > 0 && (
+      </>}
+
+      {!adaptive && !compact && q.fast.refs.length > 0 && (
         <footer className="card-tools">
           <span className="refs" title={q.fast.refs.map((r) => r.label).join("\n")}>
             from {q.fast.refs.map((r) => r.label).join(", ")}
@@ -653,6 +668,48 @@ function QuestionCard({
       )}
     </article>
   );
+});
+
+/** One reading surface. An independent expert response is reviewed explicitly; it never
+ * silently overwrites or splices potentially conflicting claims into the answer. */
+function AdaptiveAnswer({ q, onExpand, canExpand, compact }: { q: QuestionView; onExpand: () => void; canExpand: boolean; compact: boolean }) {
+  const [reviewing, setReviewing] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requesting, setRequesting] = useState(false);
+  const expertReady = q.deep.done && !q.deep.error && !!q.deep.text.trim();
+  // Exact equality is sufficient to hide a literal duplicate; it is not a semantic verdict.
+  const sameText = expertReady && q.deep.text === q.fast.text;
+  const expert = reviewing && expertReady && !sameText;
+  const shown = expert ? q.deep : q.fast;
+  const Text = (shown.text.includes("```") || shown.text.includes("~~~")) ? CodeAnswer : AnswerText;
+  const expertStarted = q.deepRequested || !!q.deep.text || q.deep.done;
+  const permitsExpert = q.answerStrategy === "adaptive_hybrid" || q.answerStrategy === "adaptive_on_demand";
+  const requestExpert = async () => {
+    if (requesting) return;
+    setRequesting(true);
+    setRequestError(null);
+    onExpand();
+    try { await api.expandAnswer(q.id); }
+    catch { setRequestError("Could not request an expert response. Try again."); }
+    finally { setRequesting(false); }
+  };
+  return <>
+    <div role="group" className="points pass pass-fast pass-adaptive" aria-label={expert ? "Expert response" : "Answer"}>
+      {expert && <span className="pass-title">Independent expert response</span>}
+      {shown.text && <Text text={shown.text} streaming={!shown.done} />}
+      <PassStatus state={passState(shown, "fast")} />
+    </div>
+    <div className={permitsExpert ? "ov-expert-controls" : undefined}>
+    {expertReady && !sameText && <button type="button" className="ov-get-deep" aria-pressed={expert} onClick={() => setReviewing(!expert)}>
+      {expert ? "Return to original answer" : "Review expert response"}
+    </button>}
+    {permitsExpert && canExpand && q.fast.done && (!expertStarted || requestError) && <button type="button" className="ov-get-deep" disabled={requesting} onClick={() => void requestExpert()}>Get an expert response</button>}
+    {expertStarted && !q.deep.done && !requestError && <p className="pass-status" role="status">Preparing expert response…</p>}
+    {q.deep.error && <p className="pass-status pass-state-warn">Expert response unavailable. The original answer is preserved.</p>}
+    {requestError && <p className="pass-status pass-state-warn" role="alert">{requestError}</p>}
+    </div>
+    {!compact && shown.refs.length > 0 && <footer className="card-tools"><span className="refs" title={shown.refs.map(r => r.label).join("\n")}>from {shown.refs.map(r => r.label).join(", ")}</span></footer>}
+  </>;
 }
 
 /** The shots a screenshot question was asked with, small; one opens large on a click. */
@@ -717,7 +774,7 @@ function ScreenTasks({ reading }: { reading: NonNullable<QuestionView["screen"]>
 function PassStatus({ state }: { state: PassState }) {
   const shown = state.tone === "wait" || state.tone === "warn";
   return (
-    <p className={cx("pass-status", `pass-state-${state.tone}`, !shown && "ui-visually-hidden")}>
+    <p key={shown ? "visible" : "hidden"} className={cx("pass-status", `pass-state-${state.tone}`, !shown && "ui-visually-hidden")}>
       {shown && <span aria-hidden="true">{state.icon} </span>}
       {state.text}
     </p>

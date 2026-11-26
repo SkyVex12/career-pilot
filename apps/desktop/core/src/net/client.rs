@@ -22,8 +22,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM, encode_frame};
 use copilot_protocol::{
-    AnswerStyle, AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ServerMessage,
-    SessionEnd, SessionResume, SessionStart, parse_server,
+    AnswerStyle, AudioFormat, AudioFrameHeader, AuthRefresh, ClientMessage, Consent, Mode, ResponseLength,
+    ServerMessage, SessionEnd, SessionResume, SessionStart, parse_server,
 };
 use futures_util::{SinkExt, StreamExt};
 use rand::SeedableRng;
@@ -41,7 +41,7 @@ use super::backoff::Backoff;
 use super::close::{self, CloseAction, CloseContext, Delay, StopReason};
 use super::ring::{FrameRing, RingFrame};
 use crate::audio::OutFrame;
-use crate::auth::{AuthError, Token, TokenProvider};
+use crate::auth::{AuthError, BoxFuture, Token, TokenProvider};
 
 pub(crate) type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -78,6 +78,8 @@ pub struct StartParams {
     pub store_transcript: bool,
     /// How the detailed answer is written (the Session tab); None: the gateway's default.
     pub answer_style: Option<AnswerStyle>,
+    /// Preferred answer depth; absent keeps the gateway default.
+    pub response_length: Option<ResponseLength>,
     /// An online test with no call: no audio is sent, nothing is transcribed.
     pub no_call: bool,
 }
@@ -98,6 +100,7 @@ impl StartParams {
             consent: Consent { store_transcript: self.store_transcript },
             audio: AudioFormat { sample_rate: 16_000, encoding: "pcm16".into() },
             answer_style: self.answer_style,
+            response_length: self.response_length,
             no_call: self.no_call.then_some(true),
         })
     }
@@ -261,6 +264,7 @@ pub fn spawn(
         adopting: adopt.is_some(),
         last_capture_ms: 0,
         ending: false,
+        retention_failed: false,
         backoff: Backoff::new(),
         rng: StdRng::from_os_rng(),
         token_expires_at: None,
@@ -290,6 +294,7 @@ struct Client {
     adopting: bool,
     last_capture_ms: u32,
     ending: bool,
+    retention_failed: bool,
     backoff: Backoff,
     rng: StdRng,
     token_expires_at: Option<SystemTime>,
@@ -331,7 +336,7 @@ impl Client {
                     close_code: last_close,
                 });
                 if self.wait_offline(delay).await {
-                    return self.stop(StopReason::Ended);
+                    return self.stop(self.shutdown_reason());
                 }
             }
             if self.ending && self.session_id.is_none() {
@@ -358,7 +363,7 @@ impl Client {
             self.stats().connects += 1;
             let outcome = self.serve(ws).await;
             let (code, retry_after_ms) = match outcome {
-                Outcome::Shutdown => return self.stop(StopReason::Ended),
+                Outcome::Shutdown => return self.stop(self.shutdown_reason()),
                 Outcome::Closed { code, reason, retry_after_ms } => {
                     self.stats().close_codes.push(code);
                     self.emit(ClientEvent::Closed { code, reason });
@@ -369,10 +374,12 @@ impl Client {
             let ctx = CloseContext {
                 has_session: self.session_id.is_some(),
                 ending: self.ending,
+                retention_failed: self.retention_failed,
                 retry_after_ms,
                 refreshed_after_401,
             };
             if self.adopting
+                && !self.retention_failed
                 && code.and_then(copilot_protocol::CloseCode::from_code)
                     == Some(copilot_protocol::CloseCode::NoStart)
             {
@@ -412,6 +419,16 @@ impl Client {
         }
     }
 
+    fn shutdown_reason(&self) -> StopReason {
+        if self.retention_failed {
+            StopReason::RetentionFailed
+        } else if self.ending && self.session_id.is_some() {
+            StopReason::EndUnconfirmed
+        } else {
+            StopReason::Ended
+        }
+    }
+
     fn stop(&self, reason: StopReason) -> StopReason {
         self.state(ConnectionState::Stopped { reason });
         reason
@@ -420,6 +437,7 @@ impl Client {
     /// The next connection starts a new session: frame numbering and the ring start over.
     fn new_session(&mut self) {
         self.session_id = None;
+        self.retention_failed = false;
         self.last_seq = 0;
         self.frame_seq = [0, 0];
         self.me_audio = false;
@@ -501,14 +519,21 @@ impl Client {
         Ok(())
     }
 
-    async fn refresh_token(&mut self, ws: &mut Ws) {
-        match self.tokens.refresh().await {
+    fn refresh_future(&self) -> BoxFuture<'static, Result<Token, AuthError>> {
+        let tokens = self.tokens.clone();
+        Box::pin(async move { tokens.refresh().await })
+    }
+
+    async fn finish_refresh(&mut self, ws: Option<&mut Ws>, result: Result<Token, AuthError>) {
+        match result {
             Ok(Token { access_token, expires_at }) => {
                 self.token_expires_at = expires_at;
                 self.stats().token_refreshes += 1;
-                let msg = ClientMessage::AuthRefresh(AuthRefresh { access_token });
-                if let Err(e) = Self::send_json(ws, &msg).await {
-                    self.emit(ClientEvent::Warning { message: format!("auth.refresh not sent: {e}") });
+                if let Some(ws) = ws {
+                    let msg = ClientMessage::AuthRefresh(AuthRefresh { access_token });
+                    if let Err(e) = Self::send_json(ws, &msg).await {
+                        self.emit(ClientEvent::Warning { message: format!("auth.refresh not sent: {e}") });
+                    }
                 }
             }
             Err(e @ AuthError::NotSignedIn(_)) | Err(e @ AuthError::Store(_)) => {
@@ -559,8 +584,9 @@ impl Client {
             self.config.ping_interval,
         );
         let mut end_deadline: Option<tokio::time::Instant> = None;
+        let mut refreshing: Option<BoxFuture<'static, Result<Token, AuthError>>> = None;
         let far = tokio::time::Instant::now() + Duration::from_secs(365 * 24 * 3600);
-        loop {
+        let outcome = loop {
             let stable_at = tokio::time::Instant::from_std(connected_at + STABLE_AFTER);
             let ready_by = tokio::time::Instant::from_std(connected_at + READY_TIMEOUT);
             let refresh_at = self.refresh_due().unwrap_or(far);
@@ -604,17 +630,22 @@ impl Client {
                                 self.state(ConnectionState::Live { session_id: ready.session_id, resumed: false });
                                 // Audio captured since the start waited in the ring.
                                 if let Err(e) = self.resend_ring(&mut ws).await {
-                                    return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                                    break Outcome::Closed { code: None, reason: e, retry_after_ms };
                                 }
                             }
                             ServerMessage::ServerError(err) => {
+                                if err.fatal && err.code == "retention_unavailable" {
+                                    self.retention_failed = true;
+                                }
                                 if err.retry_after_ms.is_some() {
                                     retry_after_ms = err.retry_after_ms;
                                 }
                             }
                             ServerMessage::AuthExpiring(_) => {
                                 self.emit(ClientEvent::Server { message: message.clone() });
-                                self.refresh_token(&mut ws).await;
+                                if refreshing.is_none() {
+                                    refreshing = Some(self.refresh_future());
+                                }
                                 continue;
                             }
                             _ => {}
@@ -625,17 +656,17 @@ impl Client {
                         let (code, reason) = frame.map_or((None, String::new()), |f| (Some(u16::from(f.code)), f.reason.to_string()));
                         // Let tungstenite finish the closing handshake.
                         let _ = tokio::time::timeout(Duration::from_millis(500), ws.close(None)).await;
-                        return Outcome::Closed { code, reason, retry_after_ms };
+                        break Outcome::Closed { code, reason, retry_after_ms };
                     }
                     Some(Ok(_)) => {} // binary, ping (answered by tungstenite), pong
-                    Some(Err(e)) => return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms },
-                    None => return Outcome::Closed { code: None, reason: "connection closed".into(), retry_after_ms },
+                    Some(Err(e)) => break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms },
+                    None => break Outcome::Closed { code: None, reason: "connection closed".into(), retry_after_ms },
                 },
                 cmd = self.rx.recv() => match cmd {
                     Some(Command::Frame(f)) => {
                         if let Some(bytes) = self.buffer(f) && live {
                             if let Err(e) = ws.send(Message::binary(bytes)).await {
-                                return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
+                                break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
                             }
                             self.stats().frames_sent += 1;
                         }
@@ -644,31 +675,31 @@ impl Client {
                         if !live {
                             self.emit(ClientEvent::Warning { message: format!("session not ready; {} not sent", m.type_name()) });
                         } else if let Err(e) = Self::send_json(&mut ws, &m).await {
-                            return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                            break Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                     }
                     Some(Command::End { summarize }) => {
                         self.ending = true;
                         if self.session_id.is_none() {
                             let _ = ws.close(None).await;
-                            return Outcome::Shutdown;
+                            break Outcome::Shutdown;
                         }
                         if let Err(e) = Self::send_json(&mut ws, &ClientMessage::SessionEnd(SessionEnd { summarize: Some(summarize) })).await {
-                            return Outcome::Closed { code: None, reason: e, retry_after_ms };
+                            break Outcome::Closed { code: None, reason: e, retry_after_ms };
                         }
                         end_deadline = Some(tokio::time::Instant::now() + END_TIMEOUT);
                     }
                     Some(Command::Shutdown) | None => {
                         let _ = tokio::time::timeout(Duration::from_secs(1), ws.close(None)).await;
-                        return Outcome::Shutdown;
+                        break Outcome::Shutdown;
                     }
                     Some(Command::DropConnection) => {
-                        return Outcome::Closed { code: None, reason: "dropped (test hook)".into(), retry_after_ms };
+                        break Outcome::Closed { code: None, reason: "dropped (test hook)".into(), retry_after_ms };
                     }
                 },
                 _ = ping.tick() => {
                     if let Err(e) = ws.send(Message::Ping(Vec::new().into())).await {
-                        return Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
+                        break Outcome::Closed { code: None, reason: e.to_string(), retry_after_ms };
                     }
                     self.stats().pings_sent += 1;
                 }
@@ -682,16 +713,28 @@ impl Client {
                 }
                 _ = tokio::time::sleep_until(ready_by), if !live => {
                     // No session.ready: treat as a dead connection and retry.
-                    return Outcome::Closed { code: None, reason: "no session.ready".into(), retry_after_ms };
+                    break Outcome::Closed { code: None, reason: "no session.ready".into(), retry_after_ms };
                 }
-                _ = tokio::time::sleep_until(refresh_at), if self.token_expires_at.is_some() => {
-                    self.refresh_token(&mut ws).await;
+                result = async { refreshing.as_mut().expect("guarded refresh").await }, if refreshing.is_some() => {
+                    refreshing = None;
+                    self.finish_refresh(Some(&mut ws), result).await;
+                }
+                _ = tokio::time::sleep_until(refresh_at), if self.token_expires_at.is_some() && refreshing.is_none() => {
+                    refreshing = Some(self.refresh_future());
                 }
                 _ = tokio::time::sleep_until(end_deadline.unwrap_or(far)), if end_deadline.is_some() => {
-                    return Outcome::Shutdown;
+                    break Outcome::Shutdown;
                 }
             }
+        };
+        drop(ws);
+        if let Some(refresh) = refreshing {
+            // A refresh may rotate credentials remotely. Settle the accepted operation
+            // before reconnect/Stop returns; never write its result to a closed socket.
+            // This keeps the existing provider completion bound, not a new hard deadline.
+            self.finish_refresh(None, refresh.await).await;
         }
+        outcome
     }
 }
 
@@ -699,7 +742,14 @@ pub(crate) async fn connect(url: &str, token: &Token) -> Result<Ws, String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     let auth = HeaderValue::from_str(&format!("Bearer {}", token.access_token)).map_err(|e| e.to_string())?;
     request.headers_mut().insert("Authorization", auth);
-    match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request)).await {
+    // Speech/control frames are latency-sensitive. Set TCP_NODELAY on the underlying socket
+    // through the supported connector, before either the WS or WSS handshake.
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(request, None, true),
+    )
+    .await
+    {
         Ok(Ok((ws, _))) => Ok(ws),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("timed out".into()),
@@ -722,14 +772,36 @@ pub async fn end_session(
         Client::send_json(&mut ws, &m).await?;
     }
     let deadline = tokio::time::Instant::now() + END_TIMEOUT;
+    let mut retention_failed = false;
     loop {
         match tokio::time::timeout_at(deadline, ws.next()).await {
-            Ok(Some(Ok(Message::Close(frame)))) => return Ok(frame.map(|f| u16::from(f.code))),
+            Ok(Some(Ok(Message::Text(text)))) => {
+                if let Ok(ServerMessage::ServerError(error)) = parse_server(&text)
+                    && error.fatal
+                    && error.code == "retention_unavailable"
+                {
+                    retention_failed = true;
+                }
+            }
+            Ok(Some(Ok(Message::Close(frame)))) => {
+                return end_result(frame.map(|f| u16::from(f.code)), retention_failed);
+            }
             Ok(Some(Ok(_))) => {}
-            Ok(Some(Err(e))) => return Err(e.to_string()),
-            Ok(None) => return Ok(None),
-            Err(_) => return Err("timed out waiting for the gateway to end the session".into()),
+            Ok(Some(Err(_))) | Ok(None) | Err(_) => return end_result(None, retention_failed),
         }
+    }
+}
+
+fn end_result(code: Option<u16>, retention_failed: bool) -> Result<Option<u16>, String> {
+    if retention_failed {
+        return Err("The gateway could not save all call data. Check History for what is available.".into());
+    }
+    // Existing exit semantics accept an already absent or exhausted call, too. Any other
+    // close, timeout or transport loss leaves completion unconfirmed and the saved id intact.
+    if matches!(code, Some(1000 | 4408 | 4403)) {
+        Ok(code)
+    } else {
+        Err("The gateway did not confirm that the call ended. Check History before trying again.".into())
     }
 }
 
@@ -751,6 +823,43 @@ mod tests {
     use copilot_protocol::audio::{FLAG_SPEECH_END, FLAG_SPEECH_START};
 
     use super::*;
+
+    // Tungstenite requires this unboxed handshake ErrorResponse in its callback signature.
+    #[allow(clippy::result_large_err)]
+    #[tokio::test]
+    async fn connector_disables_nagle_and_preserves_auth_and_binary_payload() {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_hdr_async(
+                    socket,
+                    |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+                        assert_eq!(request.headers()["Authorization"], "Bearer socket-option-test");
+                        Ok(response)
+                    },
+                )
+                .await
+                .unwrap();
+                let payload = ws.next().await.unwrap().unwrap();
+                assert_eq!(payload, Message::binary(vec![1, 2, 3, 4]));
+                ws.send(payload).await.unwrap();
+                assert!(matches!(ws.next().await, Some(Ok(Message::Close(_)))));
+                ws.flush().await.unwrap();
+            });
+            let token = Token { access_token: "socket-option-test".into(), expires_at: None };
+            let mut ws = connect(&format!("ws://{address}/session"), &token).await.unwrap();
+            let MaybeTlsStream::Plain(socket) = ws.get_ref() else { panic!("local WS must be plain") };
+            assert!(socket.nodelay().unwrap());
+            ws.send(Message::binary(vec![1, 2, 3, 4])).await.unwrap();
+            assert_eq!(ws.next().await.unwrap().unwrap(), Message::binary(vec![1, 2, 3, 4]));
+            ws.close(None).await.unwrap();
+            peer.await.unwrap();
+        })
+        .await
+        .expect("local connector test exceeded its bound");
+    }
 
     fn frame(channel: u8, flags: u8) -> OutFrame {
         OutFrame { channel, flags, capture_ms: 100, audio: vec![7; 1_600] }

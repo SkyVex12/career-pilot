@@ -290,8 +290,9 @@ describe("the Call setup design", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: "Architecture (3 facts)" }));
     await userEvent.click(screen.getByRole("checkbox", { name: "Save transcript" }));
     await userEvent.click(screen.getByRole("radio", { name: "Paragraphs" }));
+    await userEvent.click(screen.getByRole("radio", { name: "Concise" }));
     await userEvent.click(screen.getByRole("button", { name: "Start call" }));
-    expect(ipc.calls.find(c => c.cmd === "start_session")?.args.request).toMatchObject({ mode: "meeting", employer_id: "e1", agenda: "Discuss routing decisions", material_ids: ["d1"], answer_style: "paragraph", store_transcript: false });
+    expect(ipc.calls.find(c => c.cmd === "start_session")?.args.request).toMatchObject({ mode: "meeting", employer_id: "e1", agenda: "Discuss routing decisions", material_ids: ["d1"], answer_style: "paragraph", response_length: "concise", store_transcript: false });
   });
 });
 

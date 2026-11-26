@@ -5,14 +5,18 @@
     uv run copilot-replay clip.wav --drop-at 30   # cut the socket at 30 s, then resume
 
 The WAV plays as the "them" channel. Silero VAD runs on the client side, as on the desktop:
-only speech is sent, in 100 ms frames, with a speech-start flag on the first frame (after a
-short pre-roll) and an empty speech-end frame once the silence passes `--min-silence-ms`.
+only speech is sent, in 100 ms frames by default (20/40 ms are opt-in), with a speech-start
+flag on the first frame (after a short pre-roll) and an empty speech-end frame once the
+silence passes `--min-silence-ms`.
 The tool prints the transcript, detected questions and streamed answers as they arrive, then
 a per-question latency table and first-word p50/p95 against the 0.9 s / 1.5 s target
 (ARCHITECTURE.md, "SLOs, alerts and feature flags").
 
 First-word latency is measured from the true end of speech in the audio (the last voiced VAD
 window), so it includes the client's VAD hangover, to the first answer.delta of that question.
+That legacy metric includes raw deltas from either pass. Separate receipt metrics measure the
+first non-whitespace text, first non-filler SentenceBoundary and answer.done for each pass.
+These are client receipts, not DOM paint or semantically useful/verified sentence timings.
 """
 
 import argparse
@@ -31,6 +35,7 @@ from typing import Any
 import numpy as np
 
 from copilot_evals.vad import SAMPLE_RATE, Segment, segment, silero_probabilities
+from copilot_gateway.adaptive import SentenceBoundary
 from copilot_protocol.audio import encode_frame
 from copilot_protocol.models import AudioFrameHeader
 
@@ -70,8 +75,13 @@ class Send:
     segment: int
 
 
-def schedule(pcm: bytes, segments: list[Segment], preroll_ms: int = 200) -> list[Send]:
+def schedule(
+    pcm: bytes, segments: list[Segment], preroll_ms: int = 200, *, frame_ms: int = 100
+) -> list[Send]:
     """The frames a VAD client sends: speech only, start flag first, then a speech-end frame."""
+    if type(frame_ms) is not int or frame_ms not in (20, 40, 100):
+        raise ValueError("frame_ms must be 20, 40, or 100")
+    frame_samples = frame_ms * SAMPLE_RATE // 1000
     out: list[Send] = []
     preroll = preroll_ms * SAMPLE_RATE // 1000
     prev_end = 0
@@ -85,8 +95,8 @@ def schedule(pcm: bytes, segments: list[Segment], preroll_ms: int = 200) -> list
             end = min(pos + SAMPLE_RATE, burst_end)
             out.append(Send(burst_end, 0b01 if first else 0, pcm[pos * 2 : end * 2], pos // 16, i))
             first, pos = False, end
-        while pos < seg.end_decided:  # then 100 ms frames in real time
-            end = min(pos + FRAME_SAMPLES, seg.end_decided)
+        while pos < seg.end_decided:  # then bounded frames in real time
+            end = min(pos + frame_samples, seg.end_decided)
             out.append(Send(end, 0b01 if first else 0, pcm[pos * 2 : end * 2], pos // 16, i))
             first, pos = False, end
         out.append(Send(seg.end_decided, 0b10, b"", seg.end_decided * 1000 // SAMPLE_RATE, i))
@@ -101,6 +111,7 @@ class QuestionRecord:
     qtype: str = ""
     forced: bool = False
     segment: int | None = None
+    audio_attribution: str = "unattributed"
     speech_end_at: float | None = None  # wall time of the true end of speech
     end_flag_at: float | None = None
     detected_at: float | None = None
@@ -108,6 +119,9 @@ class QuestionRecord:
     confirmed_at: float | None = None
     cancelled: bool = False
     first_delta_at: dict[str, float] = field(default_factory=dict[str, float])
+    first_text_at: dict[str, float] = field(default_factory=dict[str, float])
+    first_sentence_at: dict[str, float] = field(default_factory=dict[str, float])
+    boundaries: dict[str, SentenceBoundary] = field(default_factory=dict[str, SentenceBoundary])
     done_at: dict[str, float] = field(default_factory=dict[str, float])
     done: dict[str, dict[str, Any]] = field(default_factory=dict[str, dict[str, Any]])
     text_by_pass: dict[str, str] = field(default_factory=dict[str, str])
@@ -117,6 +131,12 @@ class QuestionRecord:
         if self.speech_end_at is None or not self.first_delta_at:
             return None
         return min(self.first_delta_at.values()) - self.speech_end_at
+
+    def receipt_s(self, times: dict[str, float], pass_: str) -> float | None:
+        at = times.get(pass_)
+        if at is None or self.speech_end_at is None:
+            return None
+        return round(at - self.speech_end_at, 3)
 
 
 class Printer:
@@ -183,6 +203,7 @@ class Replay:
         self.ring: deque[tuple[float, bytes]] = deque()
         self.events: list[tuple[float, dict[str, Any]]] = []
         self.questions: dict[str, QuestionRecord] = {}
+        self.start_flags: list[tuple[float, int]] = []  # (wall time, segment)
         self.end_flags: list[tuple[float, int]] = []  # (wall time, segment)
         self.closed: asyncio.Future[int] = asyncio.get_running_loop().create_future()
         self.reconnects = 0
@@ -258,14 +279,22 @@ class Replay:
             self.ring.append((now, data))
             while self.ring and now - self.ring[0][0] > RING_S:
                 self.ring.popleft()
-            if send.flags & 0b10:
-                self.end_flags.append((now, send.segment))
+            self._record_send(send, now)
             if not self.connected.is_set():
                 continue  # in the ring buffer; resent after the resume
             try:
                 await self.ws.send(data)
             except Exception:
                 continue
+
+    def _record_send(self, send: Send, at: float) -> None:
+        if send.flags & 0b01:
+            self.start_flags.append((at, send.segment))
+        if send.flags & 0b10:
+            self.end_flags.append((at, send.segment))
+            for question in self.questions.values():
+                if question.segment == send.segment:
+                    question.end_flag_at = at
 
     async def _send_actions(self) -> None:
         for at_s, message in self.actions:
@@ -334,6 +363,7 @@ class Replay:
             q.text, q.qtype = m["text"], m["question_type"]
             if q.detected_at is None:
                 q.detected_at = at
+                q.forced = m.get("confidence") == 1.0
                 self._link_segment(q, at)
             if m["speculative"]:
                 q.speculative_at = at
@@ -347,13 +377,23 @@ class Replay:
             self.out.line("    (speculative question cancelled: the speaker kept talking)")
         elif t == "answer.delta":
             q = self._question(m["question_id"])
-            q.first_delta_at.setdefault(m["pass"], at)
-            q.text_by_pass[m["pass"]] = q.text_by_pass.get(m["pass"], "") + m["text"]
+            pass_, text = m["pass"], m["text"]
+            q.first_delta_at.setdefault(pass_, at)  # Historical raw-delta metric.
+            if text.strip():
+                q.first_text_at.setdefault(pass_, at)
+            boundary = q.boundaries.setdefault(pass_, SentenceBoundary())
+            if boundary.feed(text):
+                q.first_sentence_at.setdefault(pass_, at)
+            q.text_by_pass[pass_] = q.text_by_pass.get(pass_, "") + text
             self.out.delta(q.question_id, m["pass"], m["text"])
         elif t == "answer.done":
             q = self._question(m["question_id"])
-            q.done_at[m["pass"]] = at
-            q.done[m["pass"]] = m
+            pass_ = m["pass"]
+            q.done_at[pass_] = at
+            q.done[pass_] = m
+            boundary = q.boundaries.setdefault(pass_, SentenceBoundary())
+            if boundary.feed("", final=True):
+                q.first_sentence_at.setdefault(pass_, at)
             self.out.flush(q.question_id, m["pass"])
             fw = q.first_word_s() if m["pass"] == "fast" else None
             extra = f", first word {fw:.2f} s" if fw is not None else ""
@@ -369,14 +409,24 @@ class Replay:
             self.out.line(f"  error {m['code']}: {m['message']}")
 
     def _link_segment(self, q: QuestionRecord, at: float) -> None:
-        """A question belongs to the last speech end the client sent before it arrived."""
-        before = [(t, i) for t, i in self.end_flags if t <= at]
-        if not before:
-            q.forced = True
+        """Use only a single-started-segment timing heuristic, never QID ownership.
+
+        A first-show question can precede its end flag, but QuestionDetected carries no
+        source span. A new QID may replace a previous question even after later speech
+        begins. Keep every started segment eligible; multiple origins need explicit
+        external attribution and stay unknown, even if another QID used one already.
+        """
+        if q.forced:
+            q.audio_attribution = "forced_without_audio_attribution"
             return
-        flag_at, i = before[-1]
+        candidates = {i for started, i in self.start_flags if started <= at}
+        if len(candidates) != 1:
+            q.audio_attribution = "ambiguous_segments" if candidates else "no_started_segment"
+            return
+        i = candidates.pop()
         q.segment = i
-        q.end_flag_at = flag_at
+        q.audio_attribution = "single_started_segment_heuristic"
+        q.end_flag_at = next((ended for ended, index in self.end_flags if index == i), None)
         q.speech_end_at = self.wall(self.segments[i].end_edge)
 
 
@@ -404,6 +454,16 @@ def summarize(r: Replay) -> dict[str, Any]:
                 "text": q.text,
                 "type": q.qtype,
                 "speculative": q.speculative_at is not None,
+                "audio_segment": q.segment,
+                "audio_attribution": q.audio_attribution,
+                "receipt_latency_s": {
+                    pass_: {
+                        "first_text": q.receipt_s(q.first_text_at, pass_),
+                        "first_sentence_boundary": q.receipt_s(q.first_sentence_at, pass_),
+                        "completion": q.receipt_s(q.done_at, pass_),
+                    }
+                    for pass_ in ("fast", "deep")
+                },
                 "vad_hangover_ms": r.segments[q.segment].hangover_ms
                 if q.segment is not None
                 else None,
@@ -431,12 +491,55 @@ def summarize(r: Replay) -> dict[str, Any]:
         vals = [float(row[key]) for row in rows if row.get(key) is not None]
         if not vals:
             return None
-        return {"p50": round(pct(vals, 50), 3), "p95": round(pct(vals, 95), 3), "n": len(vals)}
+        return {
+            "p50": round(pct(vals, 50), 3),
+            "p90": round(pct(vals, 90), 3),
+            "p95": round(pct(vals, 95), 3),
+            "n": len(vals),
+            "missing": len(rows) - len(vals),
+        }
+
+    def receipt_stage(pass_: str, attribute: str) -> dict[str, Any]:
+        # Unlike the legacy table, retain canceled and incomplete question IDs.
+        values = [q.receipt_s(getattr(q, attribute), pass_) for q in r.questions.values()]
+        observed = [value for value in values if value is not None]
+        return {
+            **{f"p{p}": round(pct(observed, p), 3) if observed else None for p in (50, 90, 95)},
+            "n": len(observed),
+            "missing": len(values) - len(observed),
+            "total": len(values),
+        }
 
     starts = sum(1 for q in r.questions.values() if q.speculative_at is not None)
     cancels = sum(1 for q in r.questions.values() if q.cancelled)
     summary: dict[str, Any] = {
         "questions": len(rows),
+        "observed_question_ids": len(r.questions),
+        "receipt_stages_s": {
+            pass_: {
+                metric: receipt_stage(pass_, attribute)
+                for metric, attribute in (
+                    ("first_text", "first_text_at"),
+                    ("first_sentence_boundary", "first_sentence_at"),
+                    ("completion", "done_at"),
+                )
+            }
+            for pass_ in ("fast", "deep")
+        },
+        "receipt_measurement": {
+            "origin": "Scheduled VAD-estimated end_edge from a single-started-segment heuristic.",
+            "first_text": "First non-whitespace delta received, separately for each pass.",
+            "first_sentence_boundary": "Existing SentenceBoundary heuristic, not verified grammar "
+            "or usefulness; punctuation at stream end becomes known on done receipt.",
+            "completion": "answer.done receipt, not proof of success or absence of truncation.",
+            "scope": "All observed question IDs, including canceled/incomplete/error; undetected "
+            "utterances are not inferred. Optional absent deep passes remain missing.",
+            "limits": "Receipt, not paint; VAD is precomputed. Negative times can reflect an "
+            "answer received before speech ended. QIDs carry no source span; after multiple "
+            "segments start, new QID attribution stays missing even for replacements.",
+            "legacy": "first_word_s remains earliest raw delta across either pass; the legacy "
+            "table excludes canceled, unconfirmed questions.",
+        },
         "speech_segments": len(r.segments),
         "speculative_starts": starts,
         "speculative_cancels": cancels,
@@ -460,6 +563,8 @@ def summarize(r: Replay) -> dict[str, Any]:
         p50, p95 = pct(first_words, 50), pct(first_words, 95)
         summary["first_word"] = {
             "p50_s": round(p50, 3),
+            "p90_s": round(pct(first_words, 90), 3),
+            "missing": len(rows) - len(first_words),
             "p95_s": round(p95, 3),
             "target_p50_s": TARGET_P50_S,
             "target_p95_s": TARGET_P95_S,
@@ -490,7 +595,7 @@ def print_report(report: dict[str, Any]) -> None:
             f"{cell(row, 'server_first_delta_ms', 6)} {cell(row, 'first_word_s', 8)} "
             f"{cell(row, 'deep_first_delta_s', 7)}  {row['text'][:60]}"
         )
-    print("\nStages (p50 / p95):")
+    print("\nLegacy stages (p50 / p95):")
     for name, v in s["stages"].items():
         if v:
             print(f"  {name:<22} {v['p50']:>8} / {v['p95']:<8} (n={v['n']})")
@@ -509,6 +614,14 @@ def print_report(report: dict[str, Any]) -> None:
         )
     else:
         print("First word: no answered questions")
+    print("\nClient receipt from acoustic/VAD end (seconds; not paint or usefulness):")
+    for pass_, metrics in s["receipt_stages_s"].items():
+        for metric, values in metrics.items():
+            print(
+                f"  {pass_:>4} {metric:<24} p50/p90/p95 "
+                f"{values['p50']} / {values['p90']} / {values['p95']} "
+                f"(n={values['n']}, missing={values['missing']})"
+            )
 
 
 def dotenv_token() -> str | None:
@@ -527,6 +640,7 @@ async def main(argv: list[str] | None = None) -> int:
     p.add_argument("--threshold", type=float, default=0.5, help="Silero speech threshold")
     p.add_argument("--min-silence-ms", type=int, default=200, help="VAD hangover before speech end")
     p.add_argument("--preroll-ms", type=int, default=200)
+    p.add_argument("--frame-ms", type=int, choices=(20, 40, 100), default=100)
     p.add_argument("--start", type=float, default=0.0, help="skip this many seconds")
     p.add_argument("--max-seconds", type=float, help="play at most this much audio")
     p.add_argument("--speed", type=float, default=1.0, help="above 1 is faster; latency invalid")
@@ -549,7 +663,7 @@ async def main(argv: list[str] | None = None) -> int:
         min_silence_ms=args.min_silence_ms,
         total_samples=len(pcm) // 2,
     )
-    sends = schedule(pcm, segments, args.preroll_ms)
+    sends = schedule(pcm, segments, args.preroll_ms, frame_ms=args.frame_ms)
     seconds = len(pcm) / 2 / SAMPLE_RATE
     print(f"{args.wav}: {seconds:.1f} s, {len(segments)} speech segments; streaming in real time")
     if args.speed != 1.0:

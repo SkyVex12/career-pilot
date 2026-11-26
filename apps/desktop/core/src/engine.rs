@@ -6,13 +6,14 @@ use std::time::{Duration, Instant};
 
 use copilot_protocol::{
     AnswerExpand, AnswerFeedback, AnswerFeedbackRating, AnswerMode, AnswerStyle, AnswerStyleSet, Channel,
-    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ScreenImage, Screenshot,
+    ClientMessage, Mode, ModeSet, QuestionForce, QuestionForceKind, ResponseLength, ScreenImage, Screenshot,
     SessionSetLanguage, SharingSet,
 };
 use serde::Serialize;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
+use crate::audio::FrameDuration;
 use crate::audio::aec::EchoCanceller;
 use crate::audio::pipeline::{AudioThread, Levels, Pipeline, VadChange};
 use crate::audio::source::{AudioSource, CaptureError};
@@ -86,12 +87,24 @@ impl Engine {
         audio: AudioParts,
         sink: EventSink,
     ) -> Result<Arc<Self>, CaptureError> {
+        Self::start_with_frame_duration(config, tokens, audio, sink, FrameDuration::default())
+    }
+
+    /// Start with explicit audio packetization for an experiment or rollback. All other
+    /// capture, VAD, transport and UI behavior is the same as `start`.
+    pub fn start_with_frame_duration(
+        config: ClientConfig,
+        tokens: Arc<dyn TokenProvider>,
+        audio: AudioParts,
+        sink: EventSink,
+        duration: FrameDuration,
+    ) -> Result<Arc<Self>, CaptureError> {
         let (events_tx, mut events_rx) = mpsc::unbounded_channel();
         let (client, task) = client::spawn(config, tokens, events_tx);
         let latency = Arc::new(Mutex::new(LatencyTracker::default()));
         let session_id = Arc::new(Mutex::new(None));
         // Audio thread: frames to the client, speech edges to the UI and the latency tracker.
-        let pipeline = Pipeline::new(audio.aec, audio.them_vad, audio.me_vad);
+        let pipeline = Pipeline::with_frame_duration(audio.aec, audio.them_vad, audio.me_vad, duration);
         let audio_thread = {
             let client = client.clone();
             let latency = latency.clone();
@@ -262,8 +275,8 @@ impl Engine {
     }
 
     /// The Session tab's detailed-answer style, changed mid-call: applies to the next answers.
-    pub async fn set_answer_style(&self, answer_style: AnswerStyle) {
-        self.send(ClientMessage::AnswerStyleSet(AnswerStyleSet { answer_style })).await;
+    pub async fn set_answer_style(&self, answer_style: AnswerStyle, response_length: Option<ResponseLength>) {
+        self.send(ClientMessage::AnswerStyleSet(AnswerStyleSet { answer_style, response_length })).await;
     }
 
     /// Test hook: drop the socket as a network failure would.

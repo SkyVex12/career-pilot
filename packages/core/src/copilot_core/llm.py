@@ -28,6 +28,7 @@ import hashlib
 import logging
 import re
 import time
+import uuid
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol, cast
@@ -47,6 +48,8 @@ from openai.types.responses import (
     ResponseRefusalDeltaEvent,
     ResponseTextDeltaEvent,
 )
+
+from copilot_core.pricing import openai_cache_write_pricing
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +74,12 @@ class LLMUsage:
     input_tokens: int = 0  # all input tokens, cached ones included
     cached_tokens: int = 0  # read from the prompt cache
     output_tokens: int = 0
+    # OpenAI GPT-5.6+ reports writes separately from reads. None means unobserved,
+    # not zero; older SDKs retain the TTL breakdown as extra response fields.
+    cache_write_tokens: int | None = None
+    cache_write_30m_tokens: int | None = None
+    cache_write_12h_tokens: int | None = None
+    reasoning_tokens: int | None = None  # already included in output_tokens; never add to cost
 
 
 @dataclass(frozen=True)
@@ -307,14 +316,11 @@ def openai_content(content: str | Sequence[Mapping[str, Any]]) -> list[dict[str,
     return out
 
 
-_CACHE_OPTIONS_MODEL = re.compile(r"^gpt-(?:5\.(?:[6-9]|\d{2,})|[6-9]|\d{2,})(?:[.\-]|$)")
-
-
 def supports_cache_options(model: str) -> bool:
     """`prompt_cache_breakpoint` and `prompt_cache_options` exist from GPT-5.6 on; older models
     reject both with a 400 (checked October 2026: gpt-5.4-mini rejects them, gpt-6-luna and
     gpt-6.1-sol accept them)."""
-    return bool(_CACHE_OPTIONS_MODEL.match(model))
+    return openai_cache_write_pricing(model)
 
 
 def prompt_cache_key(blocks: Sequence[SystemBlock]) -> str | None:
@@ -330,12 +336,44 @@ def prompt_cache_key(blocks: Sequence[SystemBlock]) -> str | None:
     return "pfx-" + base64.urlsafe_b64encode(h.digest()[:18]).decode("ascii")
 
 
+def _openai_usage(raw: Any, *, include_output: bool = True) -> LLMUsage:
+    """Read SDK objects or raw usage without inventing cache-write counters.
+
+    SDK 3.26 exposes aggregate writes as a typed field and retains the documented
+    TTL breakdown as an extra dict. A future typed breakdown works the same way.
+    Request TTL/defaults are deliberately not used to fill absent response usage.
+    """
+
+    def value(obj: Any, name: str) -> Any:
+        return (
+            cast(Mapping[str, Any], obj).get(name)
+            if isinstance(obj, Mapping)
+            else getattr(obj, name, None)
+        )
+
+    def counter(obj: Any, name: str) -> int | None:
+        observed = value(obj, name)
+        return observed if type(observed) is int and observed >= 0 else None
+
+    details = value(raw, "input_tokens_details")
+    writes = value(details, "cache_write_tokens_details")
+    return LLMUsage(
+        input_tokens=counter(raw, "input_tokens") or 0,
+        cached_tokens=counter(details, "cached_tokens") or 0,
+        output_tokens=(counter(raw, "output_tokens") or 0) if include_output else 0,
+        cache_write_tokens=counter(details, "cache_write_tokens"),
+        cache_write_30m_tokens=counter(writes, "ttl_30m_tokens"),
+        cache_write_12h_tokens=counter(writes, "ttl_12h_tokens"),
+        reasoning_tokens=counter(value(raw, "output_tokens_details"), "reasoning_tokens"),
+    )
+
+
 class OpenAIProvider:
     """OpenAI through the Responses API, streaming.
 
     The system blocks go first, in order and unchanged, as one developer message, so the
-    stable prefix is byte-identical and OpenAI's automatic prompt caching can hit (there is no
-    cache_control; a breakpoint only sets `prompt_cache_key`). Requests are not stored
+    stable prefix is byte-identical. GPT-5.6+ uses explicit breakpoints; earlier models
+    use automatic prefix caching with `prompt_cache_key`. Requests are not stored
     (`store: false`). A JSON schema becomes a strict structured output.
     """
 
@@ -392,21 +430,20 @@ class OpenAIProvider:
     ) -> "LLMDone | None":
         """Write the prompt cache for `req`'s system blocks without generating output
         (`prompt_cache_options.prewarm`, GPT-5.6 and later; None on older models, which lack
-        it). Cache writes are billed at 1.25x the input rate."""
+        it). Writes are billed at the rate for their reported cache lifetime."""
         if not supports_cache_options(model) or not any(b.cache for b in req.system):
             return None
         kwargs = self.request(model, req, params)
         kwargs["extra_body"] = {"prompt_cache_options": {"mode": "explicit", "prewarm": True}}
         response = cast(Response, await self.client.responses.create(**kwargs))
         u = response.usage
+        tier = str(response.service_tier or "default")
         return LLMDone(
-            usage=LLMUsage(
-                input_tokens=u.input_tokens if u else 0,
-                cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
-            ),
+            usage=_openai_usage(u),
             stop_reason="prewarm",
             provider=self.name,
             model=model,
+            service_tier=_OPENAI_TIERS.get(tier, tier),
         )
 
     async def decide(
@@ -424,11 +461,7 @@ class OpenAIProvider:
             questions=cast(Any, list(questions)),
         )
         u = d.usage
-        details = u.input_tokens_details if u else None
-        usage = LLMUsage(
-            input_tokens=u.input_tokens if u else 0,
-            cached_tokens=(details.cached_tokens or 0) if details else 0,
-        )
+        usage = _openai_usage(u, include_output=False)
         return Decided([a.model_dump() for a in d.answers], usage, self.name, model)
 
     async def stream(
@@ -479,11 +512,7 @@ class OpenAIProvider:
         u = final.usage
         tier = str(final.service_tier or "default")
         yield LLMDone(
-            usage=LLMUsage(
-                input_tokens=u.input_tokens if u else 0,  # cached tokens included
-                cached_tokens=u.input_tokens_details.cached_tokens if u else 0,
-                output_tokens=u.output_tokens if u else 0,  # reasoning tokens included
-            ),
+            usage=_openai_usage(u),
             stop_reason=stop_reason,
             provider=self.name,
             model=model,
@@ -494,6 +523,138 @@ class OpenAIProvider:
 type FallbackHook = Callable[[str, Route, str], None]
 
 
+def error_chain(error: BaseException) -> tuple[str, ...]:
+    """Exception class names only: SDK error text can contain request data or credentials."""
+    names: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        names.append(type(current).__name__)
+        current = current.__cause__ or current.__context__
+    return tuple(names)
+
+
+def error_category(error: BaseException) -> str:
+    names = error_chain(error)
+    for name, category in (
+        ("ConnectTimeout", "connect_timeout"),
+        ("ConnectError", "connect_error"),
+        ("PoolTimeout", "pool_timeout"),
+        ("ReadTimeout", "read_timeout"),
+        ("WriteTimeout", "write_timeout"),
+    ):
+        if name in names:
+            return category
+    status = getattr(error, "status_code", None)
+    if status == 429:
+        return "rate_limit"
+    if status in (401, 403):
+        return "authentication"
+    if isinstance(status, int):
+        return "http_error"
+    if isinstance(error, TimeoutError):
+        return "provider_timeout"
+    if "APITimeoutError" in names:
+        return "provider_timeout"
+    if "APIConnectionError" in names:
+        return "connection_error"
+    return "provider_error"
+
+
+@dataclass(frozen=True)
+class AttemptEvent:
+    """One provider invocation's lifecycle, without prompt text or guessed usage.
+
+    A completed response is recorded before yielding LLMDone, so a consumer closing at
+    that point is not mistaken for a failed request. Canceled requests without usage
+    retain unknown billing exposure, including the losing half of a hedge.
+    """
+
+    request_id: str
+    attempt_id: str
+    job: str
+    attempt: int
+    provider: str
+    model: str
+    status: str
+    stage: str
+    elapsed_ms: int
+    since_request_ms: int
+    error_type: str | None = None
+    cause_types: tuple[str, ...] = ()
+    http_status: int | None = None
+    error_category: str | None = None
+    usage: LLMUsage | None = None
+    service_tier: str | None = None
+
+
+type AttemptHook = Callable[[AttemptEvent], None]
+
+
+@dataclass
+class _Attempt:
+    request_id: str
+    job: str
+    index: int
+    route: Route
+    request_started: float
+    hooks: list[AttemptHook]
+    started: float = field(default_factory=time.monotonic)
+    agen: AsyncGenerator[LLMChunk] | None = None
+    received_first: bool = False
+    terminal: bool = False
+    closed: bool = False
+    close_reason: str = "caller_cancelled"
+
+    def emit(
+        self,
+        status: str,
+        *,
+        error: BaseException | None = None,
+        category: str | None = None,
+        done: LLMDone | None = None,
+    ) -> None:
+        if self.terminal:
+            return
+        if status in {"completed", "failed", "cancelled", "closed"}:
+            self.terminal = True
+        now = time.monotonic()
+        code = getattr(error, "status_code", None)
+        event = AttemptEvent(
+            request_id=self.request_id,
+            attempt_id=f"{self.request_id}:{self.index}",
+            job=self.job,
+            attempt=self.index,
+            provider=self.route.provider.name,
+            model=self.route.model,
+            status=status,
+            stage="stream" if self.received_first else "first_chunk",
+            elapsed_ms=int((now - self.started) * 1000),
+            since_request_ms=int((now - self.request_started) * 1000),
+            error_type=type(error).__name__ if error else None,
+            cause_types=error_chain(error) if error else (),
+            http_status=code if isinstance(code, int) else None,
+            error_category=category or (error_category(error) if error else None),
+            usage=done.usage if done else None,
+            service_tier=done.service_tier if done else None,
+        )
+        for hook in self.hooks:
+            try:
+                hook(event)
+            except Exception:
+                # Observability must not turn a successful provider call into a retry.
+                log.exception("provider attempt observer failed")
+
+    async def close(self, reason: str | None = None) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        self.emit("closed", category=reason or self.close_reason)
+        if self.agen is not None:
+            await self.agen.aclose()
+
+
 class ModelRouter:
     def __init__(
         self,
@@ -501,10 +662,12 @@ class ModelRouter:
         first_token_timeout_s: float,
         on_fallback: FallbackHook | None = None,
         hedge_after_s: Mapping[str, float] | None = None,
+        on_attempt: AttemptHook | None = None,
     ) -> None:
         self.routes = routes
         self.first_token_timeout_s = first_token_timeout_s
         self.on_fallback = on_fallback
+        self.on_attempt = on_attempt
         # Per job: when the first route has no first token after this long, the next route
         # starts alongside it and whichever answers first is used (a hedged request), instead
         # of waiting out the first-token timeout before retrying.
@@ -512,22 +675,69 @@ class ModelRouter:
         self.hedges = 0
 
     async def _open(
-        self, route: Route, req: LLMRequest, params: Mapping[str, Any]
+        self, route: Route, req: LLMRequest, params: Mapping[str, Any], state: _Attempt
     ) -> tuple[AsyncGenerator[LLMChunk], LLMChunk, int]:
         """A route's stream and its first chunk, within the route's first-token timeout."""
         started = time.monotonic()
         agen = route.provider.stream(route.model, req, params)
+        state.agen = agen
+        state.emit("started")
+        first_task = asyncio.ensure_future(anext(agen))
         try:
             timeout = route.first_token_timeout_s or self.first_token_timeout_s
-            first = await asyncio.wait_for(anext(agen), timeout)
-        except BaseException:
-            await agen.aclose()
+            first = await asyncio.wait_for(first_task, timeout)
+        except BaseException as error:
+            if isinstance(error, asyncio.CancelledError):
+                state.emit("cancelled", error=error, category=state.close_reason)
+            else:
+                state.emit(
+                    "failed",
+                    error=error,
+                    category=(
+                        "first_token_timeout"
+                        if isinstance(error, TimeoutError) and first_task.cancelled()
+                        else None
+                    ),
+                )
+            await state.close()
             raise
+        state.emit("first_chunk")
+        state.received_first = True
+        if isinstance(first, LLMDone):
+            state.emit("completed", done=first)
         return agen, first, int((time.monotonic() - started) * 1000)
 
     async def stream(
-        self, job: str, req: LLMRequest, on_fallback: FallbackHook | None = None
+        self,
+        job: str,
+        req: LLMRequest,
+        on_fallback: FallbackHook | None = None,
+        *,
+        on_attempt: AttemptHook | None = None,
     ) -> AsyncGenerator[LLMChunk]:
+        attempts: list[_Attempt] = []
+        inner = self._stream(job, req, on_fallback, on_attempt, attempts)
+        try:
+            async for chunk in inner:
+                yield chunk
+        finally:
+            try:
+                await inner.aclose()
+            finally:
+                # Includes a winning stream canceled while a losing hedge is closing.
+                for attempt in attempts:
+                    await attempt.close()
+
+    async def _stream(
+        self,
+        job: str,
+        req: LLMRequest,
+        on_fallback: FallbackHook | None,
+        on_attempt: AttemptHook | None,
+        attempts: list[_Attempt],
+    ) -> AsyncGenerator[LLMChunk]:
+        request_id, request_started = uuid.uuid4().hex, time.monotonic()
+        attempt_hooks = [h for h in (self.on_attempt, on_attempt) if h is not None]
         routes = self.routes.get(job)
         if not routes:
             raise AllRoutesFailedError(job, ["no routes configured"])
@@ -548,17 +758,22 @@ class ModelRouter:
                 return False
             return model_family(route.model) not in refused
 
-        def start(route: Route) -> "asyncio.Task[tuple[AsyncGenerator[LLMChunk], LLMChunk, int]]":
+        def start(
+            index: int, route: Route
+        ) -> tuple[asyncio.Task[tuple[AsyncGenerator[LLMChunk], LLMChunk, int]], _Attempt]:
             params = without_between_tools(route.params) if refused else route.params
-            return asyncio.ensure_future(self._open(route, req, params))
+            state = _Attempt(request_id, job, index, route, request_started, attempt_hooks)
+            attempts.append(state)
+            return asyncio.ensure_future(self._open(route, req, params, state)), state
 
         pending = list(enumerate(routes))
         while pending:
             attempt, route = pending.pop(0)
             if not eligible(route):
                 continue
-            racing = {start(route): (attempt, route)}
-            won: tuple[int, Route, AsyncGenerator[LLMChunk], LLMChunk, int] | None = None
+            task, state = start(attempt, route)
+            racing = {task: (attempt, route, state)}
+            won: tuple[int, Route, AsyncGenerator[LLMChunk], LLMChunk, int, _Attempt] | None = None
             hedged = False
             try:
                 if hedge_after is not None:
@@ -569,11 +784,12 @@ class ModelRouter:
                         self.hedges += 1
                         hedged = True
                         log.info("%s: no first token after %.1f s, hedging", job, hedge_after)
-                        racing[start(nxt[1])] = nxt
+                        task, state = start(*nxt)
+                        racing[task] = (*nxt, state)
                 while racing and won is None:
                     done, _ = await asyncio.wait(racing, return_when=asyncio.FIRST_COMPLETED)
                     for task in done:
-                        a, r = racing.pop(task)
+                        a, r, state = racing.pop(task)
                         try:
                             agen, first, first_ms = task.result()
                         except Exception as e:  # next route on any error
@@ -585,27 +801,29 @@ class ModelRouter:
                             )
                             continue
                         if isinstance(first, LLMDone) and first.stop_reason == "refusal":
-                            await agen.aclose()
+                            await state.close()
                             refused.add(model_family(r.model))
                             failed(r, "refusal")
                             continue
                         if won is None:
-                            won = (a, r, agen, first, first_ms)
+                            won = (a, r, agen, first, first_ms, state)
                         else:
-                            await agen.aclose()
+                            await state.close("hedge_lost")
             finally:
-                for task in racing:  # the slower half of a hedge
+                for task, (_, _, state) in racing.items():
+                    state.close_reason = "hedge_lost" if won is not None else "caller_cancelled"
                     task.cancel()
-                for opened in await asyncio.gather(*racing, return_exceptions=True):
-                    if isinstance(opened, tuple):  # it opened before the cancel landed
-                        await opened[0].aclose()
+                await asyncio.gather(*racing, return_exceptions=True)
+                for _, _, state in racing.values():
+                    await state.close()
             if won is None:
                 continue
-            attempt, route, agen, first, first_ms = won
+            attempt, route, agen, first, first_ms, state = won
             try:
                 chunk: LLMChunk = first
                 while True:
                     if isinstance(chunk, LLMDone):
+                        state.emit("completed", done=chunk)
                         yield LLMDone(
                             usage=chunk.usage,
                             stop_reason=chunk.stop_reason,
@@ -619,8 +837,16 @@ class ModelRouter:
                         return
                     yield chunk
                     chunk = await anext(agen)
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    state.emit("cancelled", error=error, category="caller_cancelled")
+                elif isinstance(error, GeneratorExit):
+                    state.emit("closed", category="consumer_closed")
+                else:
+                    state.emit("failed", error=error)
+                raise
             finally:
-                await agen.aclose()
+                await state.close()
         raise AllRoutesFailedError(job, errors, refused=bool(refused) and not other_failures)
 
     async def warm(self) -> None:

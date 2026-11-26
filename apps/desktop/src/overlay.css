@@ -298,6 +298,33 @@ html[data-window="overlay"] #root {
   border-color: transparent;
 }
 
+/* Reserve the existing new-answer action above the reading surface. */
+.ov-answer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  min-height: 36px;
+  padding: 3px 16px;
+}
+.ov-answer-head .ov-pane-head {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ov-answer-head .ov-jump-top {
+  position: static;
+  flex: none;
+  margin-left: auto;
+  transform: none;
+}
+.ov.is-compact .ov-answer-head {
+  min-height: 32px;
+  padding: 1px 12px;
+}
+
 @container overlay (max-width: 559px) {
   .ov-split {
     flex-direction: column;
@@ -406,6 +433,14 @@ html[data-window="overlay"] #root {
   /* Held for three lines of talking points while they are written. */
   min-height: calc(var(--fs-fast) * 1.45 * 3);
 }
+.ov-expert-controls {
+  min-height: 28px;
+}
+.pass-adaptive {
+  /* Hold one sentence through completion; short answers stay short. */
+  min-height: calc(var(--fs-fast) * 1.45);
+  margin-bottom: var(--space-2);
+}
 .pass-title {
   display: block;
   margin-bottom: var(--space-1);
@@ -465,16 +500,12 @@ html[data-window="overlay"] #root {
   line-height: 1.45;
   font-weight: 500;
 }
+/* Keep earlier answer typography stable so promotion does not reflow the reading anchor. */
 .card.is-earlier .points .bullets,
 .card.is-earlier .points .prose,
 .card.is-earlier .deep .bullets,
 .card.is-earlier .deep .prose {
   color: var(--ov-text-2);
-}
-.card.is-earlier .points .bullets,
-.card.is-earlier .points .prose {
-  font-size: var(--fs-fast-earlier);
-  font-weight: 400;
 }
 .deep .bullets,
 .deep .prose {
@@ -482,19 +513,6 @@ html[data-window="overlay"] #root {
   color: var(--ov-text);
   font-size: var(--fs-deep);
   line-height: 1.5;
-}
-.suggested {
-  color: var(--ov-text-2);
-  font-style: italic;
-}
-.suggest-tag {
-  margin-left: var(--space-2);
-  padding: 0 var(--space-1);
-  border: 1px solid var(--ov-line);
-  border-radius: var(--radius-sm);
-  color: var(--ov-warn);
-  font-size: 12px;
-  font-style: normal;
 }
 .ov-caret {
   display: inline-block;
@@ -564,6 +582,12 @@ html[data-window="overlay"] #root {
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
   border-top: 1px solid var(--ov-line);
+}
+
+/* Keep the first sentence at a fixed top while an adaptive answer grows or completes.
+   The legacy card retains its original content-sized behavior. */
+.ov-now-pinned.is-adaptive {
+  flex: 0 0 55%;
 }
 
 /* Compact: the answers only, with less chrome. The type keeps its size. */

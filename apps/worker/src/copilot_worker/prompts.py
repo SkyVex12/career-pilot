@@ -127,6 +127,11 @@ Rules:
 - Use only facts from <digest> about the candidate: roles and their highlights, projects,
   stories, skills, the profile. Never invent experience, employers, numbers or dates, and keep
   each fact's own verbs and qualifiers ("proposed", "evaluated").
+- An absent fact does not establish its opposite: never infer that the candidate has no
+  experience with a tool or has never done a task. Omit a prepared question whose direct
+  answer requires an unknown personal fact; it needs live clarification.
+- Keep each employer, project, task, speaker, status and test result with its own source.
+  Never transfer another task's completion, testing or ownership to this one.
 - For the platforms, tools and skills the job names, write questions that ask about them
   directly ("your experience with X's API"). Their talking points give the candidate's facts on
   X first, then one specific point about X itself (an API, object, limit or pitfall by name)

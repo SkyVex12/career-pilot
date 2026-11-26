@@ -48,6 +48,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
+from copilot_evals.answer_eval import call_cost, format_cost, summarize_costs
+
 ROOT = Path(__file__).resolve().parents[2] / "coding"
 PAGES = ROOT / "pages"
 SHOTS = ROOT / "shots"
@@ -461,10 +463,8 @@ async def solve(router: Any, settings: Any, case: Case, mode: str) -> dict[str, 
     return run
 
 
-def call_costs(settings: Any, calls: list[Any]) -> float:
-    from copilot_evals.answer_eval import call_cost
-
-    return round(sum(call_cost(settings, d) for d in calls), 5)
+def call_costs(settings: Any, calls: list[Any]) -> dict[str, Any]:
+    return summarize_costs([{"cost_usd": call_cost(settings, done)} for done in calls])
 
 
 def pct(values: list[int], q: float) -> int | None:
@@ -506,7 +506,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             ),
             "code_done_ms_p50": pct([r["code_done_ms"] for r in code_rs], 0.5),
             "code_done_ms_p95": pct([r["code_done_ms"] for r in code_rs], 0.95),
-            "cost_usd": round(sum(r.get("cost_usd", 0.0) for r in rs), 4),
+            **summarize_costs(rs),
         }
     return out
 
@@ -577,10 +577,14 @@ async def cmd_run(args: argparse.Namespace) -> int:
             row["usage"] = [
                 {"model": d.model, "first_token_ms": d.first_token_ms, "attempt": d.attempt,
                  "input": d.usage.input_tokens, "cached": d.usage.cached_tokens,
-                 "output": d.usage.output_tokens}
+                 "output": d.usage.output_tokens,
+                 "cache_write_tokens": d.usage.cache_write_tokens,
+                 "cache_write_30m_tokens": d.usage.cache_write_30m_tokens,
+                 "cache_write_12h_tokens": d.usage.cache_write_12h_tokens,
+                 "reasoning_tokens": d.usage.reasoning_tokens}
                 for d in calls
             ]  # fmt: skip
-            row["cost_usd"] = call_costs(settings, calls)
+            row.update(call_costs(settings, calls))
             row["models"] = sorted({d.model for d in calls})
             row["grade"] = await asyncio.to_thread(grade, case, run)
             g = row["grade"]
@@ -606,7 +610,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
     (out / "summary.json").write_text(json.dumps(summary, indent=1), "utf-8")
     (out / "samples.md").write_text(samples_md(args.label, rows, summary), "utf-8")
     print(summary_table({args.label: summary}))
-    print(f"\nCost: ${sum(r.get('cost_usd', 0) for r in rows):.3f}  ->  {out}")
+    print(f"\nCost: {format_cost(summarize_costs(rows))}  ->  {out}")
     return 0
 
 

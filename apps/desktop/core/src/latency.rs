@@ -1,6 +1,7 @@
 //! Per-question latency for the debug panel: from the end of the other side's speech to the
-//! first answer word on screen, measured on the client, next to the gateway's own
-//! `latency_ms` from `answer.done`.
+//! first non-empty answer delta received by the native client, next to the gateway's own
+//! `latency_ms` from `answer.done`. This is receipt timing, not WebView paint or useful
+//! sentence timing; native event forwarding and UI rendering happen afterward.
 //!
 //! The anchor is the true end of speech (the VAD's edge, so its hangover counts, as in the
 //! replay tool), or the moment a question was forced with the hotkey or typed. A deep pass the
@@ -193,11 +194,19 @@ mod tests {
             confidence,
             speculative,
             screen: None,
+            answer_strategy: None,
         })
     }
 
     fn delta(pass: Pass, text: &str) -> ServerMessage {
-        ServerMessage::AnswerDelta(AnswerDelta { seq: 2, question_id: qid(), pass, text: text.into() })
+        ServerMessage::AnswerDelta(AnswerDelta {
+            seq: 2,
+            question_id: qid(),
+            pass,
+            text: text.into(),
+            sequence: None,
+            sequence_end: None,
+        })
     }
 
     #[test]
@@ -265,6 +274,36 @@ mod tests {
     }
 
     #[test]
+    fn gateway_takeover_wire_uses_button_anchor_once() {
+        // This exact fixture is asserted against Session._force_taken's first
+        // actual wire event by the gateway test, not a separately invented shape.
+        let mut first =
+            copilot_protocol::parse_server(include_str!("../tests/fixtures/forced_takeover_detected.json"))
+                .unwrap();
+        let t0 = Instant::now();
+        let mut l = LatencyTracker::default();
+        l.on_them_speech_end(t0);
+        l.on_force(t0 + Duration::from_millis(100));
+        let record = l.on_message(&first, t0 + Duration::from_millis(150)).unwrap();
+        assert_eq!((record.anchor, record.detected_ms), (Anchor::Forced, Some(50)));
+        let record = l.on_message(&delta(Pass::Fast, "Ready."), t0 + Duration::from_millis(250)).unwrap();
+        assert_eq!(record.fast_first_word_ms, Some(150));
+        let reports = l.take_reports();
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].anchor, LatencyReportAnchor::Forced);
+        assert_eq!(reports[0].first_word_ms, 150);
+        assert!(l.pending_force.is_none());
+
+        // Even a confidence-1 automatic card inside the five-second force window
+        // must use the new speech edge, never inherit this consumed button press.
+        let ServerMessage::QuestionDetected(next) = &mut first else { unreachable!() };
+        next.question_id = Uuid::parse_str("0192f3c4-1d0a-7c55-b2e1-77c0a9d4e211").unwrap();
+        l.on_them_speech_end(t0 + Duration::from_millis(400));
+        let record = l.on_message(&first, t0 + Duration::from_millis(450)).unwrap();
+        assert_eq!((record.anchor, record.detected_ms), (Anchor::SpeechEnd, Some(50)));
+    }
+
+    #[test]
     fn keeps_the_gateway_latency() {
         let t0 = Instant::now();
         let mut l = LatencyTracker::default();
@@ -276,11 +315,13 @@ mod tests {
             memory_refs: vec![],
             usage: Usage { input_tokens: 1, cached_tokens: 0, output_tokens: 1 },
             source: None,
+            delta_count: None,
             latency_ms: Some(LatencyMs {
                 turn_end_ms: Some(410),
                 detector_ms: None,
                 first_token_ms: Some(300),
                 first_delta_ms: Some(700),
+                first_complete_sentence_ms: Some(900),
                 total_ms: Some(1_400),
                 final_ms: None,
                 start_ms: None,
@@ -296,6 +337,8 @@ mod tests {
         });
         let r = l.on_message(&done, t0).unwrap();
         assert_eq!(r.anchor, Anchor::Unknown);
-        assert_eq!(r.fast_gateway.unwrap().first_delta_ms, Some(700));
+        let timing = r.fast_gateway.unwrap();
+        assert_eq!(timing.first_delta_ms, Some(700));
+        assert_eq!(timing.first_complete_sentence_ms, Some(900));
     }
 }

@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { emit } from "@tauri-apps/api/event";
 import { expect, it, vi } from "vitest";
 import { TransparencyControl, ReadingSettings } from "../src/WindowSettingControls";
-import { useViewPrefs, useAnswerStyle, useTextScaleKeys } from "../src/viewPreferences";
+import { useViewPrefs, useAnswerStyle, useResponseLength, useTextScaleKeys } from "../src/viewPreferences";
 import { useWorkspaceWindowOpacity } from "../src/App";
 import { TEXT_SCALE_KEY } from "../src/transcript";
 import { ipc } from "./ipc";
@@ -40,25 +40,30 @@ it("updates every mounted reading control and restores saved values when reopene
   const overlay = within(screen.getByRole("region", { name: "Overlay" }));
   await userEvent.click(main.getByRole("radio", { name: "Paragraphs" }));
   expect(overlay.getByRole("radio", { name: "Paragraphs" })).toBeChecked();
+  await userEvent.click(main.getByRole("radio", { name: "Detailed" }));
+  expect(overlay.getByRole("radio", { name: "Detailed" })).toBeChecked();
   await userEvent.click(overlay.getByRole("button", { name: "Larger text (Ctrl+plus)" }));
   expect(liveView.result.current.textScale).toBe(1.1);
   expect(localStorage.getItem(TEXT_SCALE_KEY)).toBe("1.1");
   view.unmount();
   render(<Control name="Reopened" />);
   expect(screen.getByRole("radio", { name: "Paragraphs" })).toBeChecked();
+  expect(screen.getByRole("radio", { name: "Detailed" })).toBeChecked();
   await userEvent.click(screen.getByRole("button", { name: "Reset" }));
   expect(liveView.result.current.textScale).toBe(1);
 });
 
 it("receives changes from another webview through storage events", () => {
-  const view = renderHook(() => ({ view: useViewPrefs(), answer: useAnswerStyle(false)[0] }));
+  const view = renderHook(() => ({ view: useViewPrefs(), answer: useAnswerStyle(false)[0], length: useResponseLength(false)[0] }));
   act(() => {
     localStorage.setItem(TEXT_SCALE_KEY, "1.4");
     localStorage.setItem("copilot.answerStyle", "paragraph");
+    localStorage.setItem("copilot.responseLength", "concise");
     window.dispatchEvent(new StorageEvent("storage", { key: "copilot.answerStyle", newValue: "paragraph" }));
   });
   expect(view.result.current.view.textScale).toBe(1.4);
   expect(view.result.current.answer).toBe("paragraph");
+  expect(view.result.current.length).toBe("concise");
 });
 
 it("only shares a live answer-format change after the session accepts it", async () => {
@@ -84,4 +89,55 @@ it("shares keyboard text-size changes from either window root", () => {
   main.unmount();
   fireEvent.keyDown(window, { key: "+", ctrlKey: true });
   expect(overlay.result.current.textScale).toBe(1);
+});
+
+
+it("sends the latest format and length together without regenerating a current answer", async () => {
+  const host = renderHook(() => ({ style: useAnswerStyle(true), length: useResponseLength(true) }));
+  await act(async () => { await Promise.all([host.result.current.style[1]("paragraph"), host.result.current.length[1]("detailed")]); });
+  expect(ipc.calls.filter(call => call.cmd === "set_answer_style").map(call => call.args)).toEqual([
+    { style: "paragraph", responseLength: "default" },
+    { style: "paragraph", responseLength: "detailed" },
+  ]);
+  expect(host.result.current.length[0]).toBe("detailed");
+  expect(ipc.calls.some(call => call.cmd === "expand_answer" || call.cmd === "answer_now")).toBe(false);
+});
+
+it("keeps the saved response length if the live preference request fails", async () => {
+  const host = renderHook(() => useResponseLength(true));
+  ipc.handle("set_answer_style", () => { throw "Disconnected"; });
+  await act(async () => { await expect(host.result.current[1]("concise")).rejects.toBe("Disconnected"); });
+  expect(host.result.current[0]).toBe("default");
+  ipc.handle("set_answer_style", () => null);
+  await act(async () => { await host.result.current[1]("concise"); });
+  expect(host.result.current[0]).toBe("concise");
+});
+
+it("keeps answer generation preferences out of guest reading controls", () => {
+  render(<ReadingSettings running guest busy={false} run={() => undefined} />);
+  expect(screen.queryByRole("radiogroup", { name: "Response length" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("radiogroup", { name: "Answer format" })).not.toBeInTheDocument();
+});
+
+it.each([
+  ["bullets", "Bullets", "default", "Default"],
+  ["bullets", "Bullets", "concise", "Concise"],
+  ["bullets", "Bullets", "detailed", "Detailed"],
+  ["paragraph", "Paragraphs", "default", "Default"],
+  ["paragraph", "Paragraphs", "concise", "Concise"],
+  ["paragraph", "Paragraphs", "detailed", "Detailed"],
+] as const)("keeps format %s (%s) independent of length %s (%s)", async (style, styleLabel, length, lengthLabel) => {
+  // Begin with the opposite choices so each click must send a real live update.
+  localStorage.setItem("copilot.answerStyle", style === "bullets" ? "paragraph" : "bullets");
+  localStorage.setItem("copilot.responseLength", length === "default" ? "detailed" : "default");
+  render(<ReadingSettings running busy={false} run={action => { void action(); }} />);
+  await userEvent.click(screen.getByRole("radio", { name: styleLabel }));
+  await userEvent.click(screen.getByRole("radio", { name: lengthLabel }));
+  expect(screen.getByRole("radio", { name: styleLabel })).toBeChecked();
+  expect(screen.getByRole("radio", { name: lengthLabel })).toBeChecked();
+  const updates = ipc.calls.filter(call => call.cmd === "set_answer_style");
+  expect(updates[updates.length - 1]?.args).toEqual({ style, responseLength: length });
+  expect(localStorage.getItem("copilot.answerStyle")).toBe(style);
+  expect(localStorage.getItem("copilot.responseLength")).toBe(length);
+  expect(ipc.calls.some(call => call.cmd === "expand_answer" || call.cmd === "answer_now")).toBe(false);
 });

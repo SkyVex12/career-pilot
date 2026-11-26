@@ -78,6 +78,11 @@
       "type": "string",
       "enum": ["bullets", "paragraph"]
     },
+    "ResponseLength": {
+      "description": "Answer depth preference: default adapts to the question; concise is direct and compact; detailed includes relevant explanation without padding simple answers.",
+      "type": "string",
+      "enum": ["default", "concise", "detailed"]
+    },
     "Channel": {
       "description": "Audio source: them = system output (the other side), me = microphone (the user).",
       "type": "string",
@@ -140,6 +145,7 @@
         "detector_ms": { "type": "integer", "minimum": 0 },
         "first_token_ms": { "type": "integer", "minimum": 0 },
         "first_delta_ms": { "type": "integer", "minimum": 0 },
+        "first_complete_sentence_ms": { "type": "integer", "minimum": 0, "description": "First sentence boundary observed in emitted text; a syntactic proxy, not a semantic usefulness score." },
         "total_ms": { "type": "integer", "minimum": 0 },
         "final_ms": { "type": "integer", "minimum": 0 },
         "start_ms": { "type": "integer", "minimum": 0 },
@@ -216,6 +222,10 @@
         "answer_style": {
           "description": "The detailed answer's style; absent means bullets.",
           "$ref": "#/$defs/AnswerStyle"
+        },
+        "response_length": {
+          "description": "Answer length preference; absent means default.",
+          "$ref": "#/$defs/ResponseLength"
         },
         "no_call": {
           "description": "An online test with no call (coding mode): the client sends no audio and nothing is transcribed; screenshots and typed questions are answered, and keep the session from ending as idle.",
@@ -402,11 +412,15 @@
       "required": ["type", "mode"]
     },
     "AnswerStyleSet": {
-      "description": "User switches the detailed answer's style mid-call; applies to the next answers.",
+      "description": "User changes answer presentation preferences mid-call; applies to the next answers.",
       "type": "object",
       "properties": {
         "type": { "type": "string", "const": "answer_style.set" },
-        "answer_style": { "$ref": "#/$defs/AnswerStyle" }
+        "answer_style": { "$ref": "#/$defs/AnswerStyle" },
+        "response_length": {
+          "description": "Optional length preference; omitted leaves the current preference unchanged.",
+          "$ref": "#/$defs/ResponseLength"
+        }
       },
       "required": ["type", "answer_style"]
     },
@@ -505,6 +519,7 @@
       "description": "A question aimed at the user. speculative: true means it may still be cancelled; confirmation repeats the same question_id with speculative: false.",
       "type": "object",
       "properties": {
+        "answer_strategy": {"description":"Live-answer strategy. Missing means the legacy dual-answer presentation.","type":"string","enum":["legacy_dual","adaptive","adaptive_hybrid","adaptive_on_demand"]},
         "type": { "type": "string", "const": "question.detected" },
         "seq": { "$ref": "#/$defs/Seq" },
         "question_id": { "$ref": "#/$defs/Uuid" },
@@ -533,6 +548,8 @@
       "description": "Next chunk of streamed answer text.",
       "type": "object",
       "properties": {
+        "sequence": {"description":"Zero-based chunk sequence within this question and pass.","type":"integer","minimum":0},
+        "sequence_end": {"description":"Exclusive chunk sequence end for a compacted snapshot chunk.","type":"integer","minimum":1},
         "type": { "type": "string", "const": "answer.delta" },
         "seq": { "$ref": "#/$defs/Seq" },
         "question_id": { "$ref": "#/$defs/Uuid" },
@@ -545,6 +562,7 @@
       "description": "Answer pass finished.",
       "type": "object",
       "properties": {
+        "delta_count": {"description":"Total number of chunks sent for this question and pass.","type":"integer","minimum":0},
         "type": { "type": "string", "const": "answer.done" },
         "seq": { "$ref": "#/$defs/Seq" },
         "question_id": { "$ref": "#/$defs/Uuid" },

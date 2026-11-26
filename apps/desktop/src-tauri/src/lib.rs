@@ -9,6 +9,7 @@
 mod background;
 mod call_window;
 mod compact_window;
+mod event_delivery;
 mod history;
 mod hotkeys;
 mod layout;
@@ -50,8 +51,11 @@ use copilot_client::net::client::{self, Adopt, ClientConfig, ClientStats, Connec
 use copilot_client::net::close::StopReason;
 use copilot_client::net::seat::{self, SeatHandle, SeatParams};
 use copilot_client::oauth::{self, OAuthTokenProvider};
-use copilot_client::protocol::{AnswerMode, AnswerStyle, Mode, ScreenImage, ScreenImageMediaType};
+use copilot_client::protocol::{
+    AnswerMode, AnswerStyle, Mode, ResponseLength, ScreenImage, ScreenImageMediaType,
+};
 use copilot_client::wake::{self, Progress};
+use event_delivery::OrderedDelivery;
 use history::History;
 use hotkeys::Action;
 use layout::MonitorLayout;
@@ -120,6 +124,7 @@ struct AppState {
     /// A guest seat on someone else's call (net/seat.rs); never at the same time as `engine`.
     seat: Mutex<Option<SeatHandle>>,
     history: Arc<Mutex<History>>,
+    event_delivery: Arc<OrderedDelivery<Value>>,
     /// `desktop-<version>`: the gateway's client_version and the API's x-copilot-client.
     client: String,
     /// The app's clock for the update schedule (release::schedule), and what the user did.
@@ -1109,8 +1114,13 @@ async fn set_profile(app: AppHandle, state: State<'_, AppState>, profile: Option
         s.last_session_id = None;
     });
     state.data_cache.clear();
-    let reset = state.history.lock().unwrap().reset_context();
-    let _ = app.emit(EVENT, reset);
+    let elected = {
+        let mut history = state.history.lock().unwrap();
+        state.event_delivery.enqueue(history.reset_context())
+    };
+    if elected {
+        drain_events(&app, &state.event_delivery);
+    }
     Ok(())
 }
 
@@ -1152,6 +1162,8 @@ struct StartRequest {
     /// The Session tab's detailed-answer style; absent from older windows.
     #[serde(default)]
     answer_style: Option<AnswerStyle>,
+    #[serde(default)]
+    response_length: Option<ResponseLength>,
     /// An online test with no call (coding mode): no audio device is opened.
     #[serde(default)]
     no_call: bool,
@@ -1159,10 +1171,33 @@ struct StartRequest {
 
 /// Events are numbered per session (`n`), so a window that replays the snapshot applies only
 /// the live events after it.
-fn emit(app: &AppHandle, history: &Mutex<History>, event: &UiEvent) {
+fn drain_events(app: &AppHandle, delivery: &OrderedDelivery<Value>) {
+    delivery.drain(|event| {
+        let _ = app.emit(EVENT, event);
+    });
+}
+
+fn emit(
+    app: &AppHandle,
+    history: &Mutex<History>,
+    delivery: &OrderedDelivery<Value>,
+    epoch: u64,
+    event: &UiEvent,
+) {
     let Ok(event) = serde_json::to_value(event) else { return };
-    let n = history.lock().unwrap().push(event.clone());
-    let _ = app.emit(EVENT, serde_json::json!({ "n": n, "event": event }));
+    let elected = {
+        let mut history = history.lock().unwrap();
+        if history.epoch() != epoch {
+            return;
+        }
+        let n = history.push(event.clone());
+        // Number assignment and enqueue are atomic across audio and network sinks.
+        delivery.enqueue(serde_json::json!({ "n": n, "epoch": epoch, "event": event }))
+    };
+    // Tauri invokes native listeners synchronously. Never hold history while emitting.
+    if elected {
+        drain_events(app, delivery);
+    }
 }
 
 /// The server's message when the stage requires a Career-OS link (copilot_core.careeros).
@@ -1213,6 +1248,7 @@ async fn open_session(app: AppHandle, state: State<'_, AppState>, request: OpenR
         platform: request.platform,
         store_transcript: true,
         answer_style: None,
+        response_length: None,
         no_call: request.no_call,
     };
     launch(app, state, start, Some(adopt)).await
@@ -1280,7 +1316,11 @@ async fn launch(
             return Err(CAREER_OS_REQUIRED.into());
         }
     }
-    state.history.lock().unwrap().clear();
+    let epoch = {
+        let mut history = state.history.lock().unwrap();
+        history.clear();
+        history.epoch()
+    };
 
     let vad = || -> Res<ChannelVad> {
         Ok(ChannelVad::new(Box::new(Silero::new().map_err(|e| e.to_string())?), VadParams::default()))
@@ -1310,6 +1350,7 @@ async fn launch(
             client_version: state.client.clone(),
             store_transcript: request.store_transcript,
             answer_style: request.answer_style,
+            response_length: request.response_length,
             no_call: request.no_call,
         },
     );
@@ -1317,7 +1358,11 @@ async fn launch(
     let sink = {
         let app = app.clone();
         let history = state.history.clone();
+        let delivery = state.event_delivery.clone();
         Arc::new(move |event: UiEvent| {
+            if history.lock().unwrap().epoch() != epoch {
+                return;
+            }
             if let UiEvent::Connection { state: ConnectionState::Live { session_id, .. } } = &event {
                 let sid = *session_id;
                 app.state::<AppState>().data_cache.invalidate(&format!("/sessions/{sid}"));
@@ -1338,7 +1383,7 @@ async fn launch(
             if let UiEvent::Stopped { reason: StopReason::Outdated } = &event {
                 outdated(&app, "the gateway closed the session with 4426");
             }
-            emit(&app, &history, &event);
+            emit(&app, &history, &delivery, epoch, &event);
         })
     };
     let engine = Engine::start(config, tokens, parts, sink).map_err(|e| e.to_string())?;
@@ -1615,18 +1660,26 @@ async fn set_spoken_language(state: State<'_, AppState>, language: String, reque
 
 /// The Session tab's detailed-answer style, changed during a call.
 #[tauri::command]
-async fn set_answer_style(state: State<'_, AppState>, style: AnswerStyle) -> Res<()> {
-    state.engine()?.set_answer_style(style).await;
+async fn set_answer_style(
+    state: State<'_, AppState>,
+    style: AnswerStyle,
+    response_length: Option<ResponseLength>,
+) -> Res<()> {
+    state.engine()?.set_answer_style(style, response_length).await;
     Ok(())
 }
 
 /// The session's events so far (compacted), whether a session is running, and the number of
 /// the next event: a window applies these, then live events from that number on.
 #[tauri::command]
-fn snapshot(state: State<'_, AppState>) -> (Vec<serde_json::Value>, bool, u64) {
-    let (events, next) = state.history.lock().unwrap().snapshot();
+fn snapshot(state: State<'_, AppState>) -> (Vec<serde_json::Value>, bool, u64, u64) {
+    let (events, next, epoch) = {
+        let history = state.history.lock().unwrap();
+        let (events, next) = history.snapshot();
+        (events, next, history.epoch())
+    };
     let running = state.engine.lock().unwrap().is_some() || state.seat.lock().unwrap().is_some();
-    (events, running, next)
+    (events, running, next, epoch)
 }
 
 /// Join someone else's live call as a guest (ARCHITECTURE.md, "Guest seats"), once the host
@@ -1651,11 +1704,16 @@ async fn seat_join(app: AppHandle, state: State<'_, AppState>, request: SeatJoin
     tokens.current().await.map_err(|e| e.to_string())?;
     let settings = state.settings.lock().unwrap().clone();
     let url = state.fill_url(&app, &settings.seat_url(), true).await?;
-    state.history.lock().unwrap().clear();
+    let epoch = {
+        let mut history = state.history.lock().unwrap();
+        history.clear();
+        history.epoch()
+    };
     let sink = {
         let app = app.clone();
         let history = state.history.clone();
-        Arc::new(move |event: UiEvent| emit(&app, &history, &event))
+        let delivery = state.event_delivery.clone();
+        Arc::new(move |event: UiEvent| emit(&app, &history, &delivery, epoch, &event))
     };
     let params = SeatParams {
         url,
@@ -2312,6 +2370,7 @@ pub fn run() {
                 engine: Mutex::new(None),
                 seat: Mutex::new(None),
                 history: Arc::new(Mutex::new(History::default())),
+                event_delivery: Arc::new(OrderedDelivery::default()),
                 client: format!("desktop-{version}"),
                 started: Instant::now(),
                 activity: Mutex::new(Activity::default()),

@@ -84,7 +84,7 @@ fn them_speech_becomes_two_segments_of_frames() {
     let sent_ms = them_frames.iter().map(|f| f.audio.len()).sum::<usize>() / 16;
     let clip_ms = them.len() / 16;
     assert!(sent_ms > 3_000 && sent_ms < clip_ms - 2_000, "sent {sent_ms} ms of a {clip_ms} ms clip");
-    // Frames are at most 1 s, and 100 ms once speech is under way.
+    // Frames are at most 1 s, and 40 ms once speech is under way.
     assert!(them_frames.iter().all(|f| f.audio.len() <= 16_000));
     // No me frames: the mic was silent.
     assert!(r.frames.iter().all(|f| f.channel != CHANNEL_ME));

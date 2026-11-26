@@ -5,7 +5,9 @@ The gateway and the workers build their routes on top of these (copilot_gateway.
 copilot_worker.llm); any provider can be used alone.
 """
 
+import asyncio
 import logging
+from collections.abc import Sequence
 from typing import Any
 
 import anthropic
@@ -33,12 +35,22 @@ def keepalive_limits(settings: CoreSettings) -> httpx2.Limits:
 def openai_client(settings: CoreSettings, timeout_s: float = 30.0) -> openai.AsyncOpenAI:
     assert settings.openai_api_key is not None
     limits = keepalive_limits(settings)
+    http_client: httpx2.AsyncClient
+    if settings.openai_http2 and settings.openai_http2_cancel_fix:
+        # Lazy import keeps disabled/H1 clients independent of private transport hooks.
+        from ._openai_http import make_http_client
+
+        http_client = make_http_client(
+            limits=limits, http2=True, cancellation_fix=True, unsupported_policy="fail"
+        )
+    else:
+        http_client = openai.DefaultAsyncHttpxClient(limits=limits, http2=settings.openai_http2)
     return openai.AsyncOpenAI(
         api_key=settings.openai_api_key.get_secret_value(),
         base_url=settings.openai_base_url,
         max_retries=0,  # the router moves on to the next route instead
-        timeout=openai.Timeout(timeout_s, connect=2.0),
-        http_client=openai.DefaultAsyncHttpxClient(limits=limits, http2=settings.openai_http2),
+        timeout=openai.Timeout(timeout_s, connect=settings.llm_connect_timeout_s),
+        http_client=http_client,
     )
 
 
@@ -55,7 +67,7 @@ def openai_params(settings: CoreSettings, job: str) -> dict[str, Any]:
 
 
 def make_providers(settings: CoreSettings, timeout_s: float = 30.0) -> list[LLMProvider]:
-    timeout = anthropic.Timeout(timeout_s, connect=2.0)
+    timeout = anthropic.Timeout(timeout_s, connect=settings.llm_connect_timeout_s)
     providers: list[LLMProvider] = []
     for name in settings.llm_providers:
         if name == "bedrock":
@@ -84,3 +96,22 @@ def make_providers(settings: CoreSettings, timeout_s: float = 30.0) -> list[LLMP
             )
             providers.append(AnthropicProvider("anthropic", client))
     return providers
+
+
+async def close_providers(providers: Sequence[LLMProvider]) -> None:
+    """Close each owned SDK pool once after all router tasks have been drained.
+
+    Callers retain ownership of injected providers. Evaluation wrappers should pass the
+    underlying providers created for that run, rather than borrowed application clients.
+    """
+    clients = {
+        id(client): client
+        for provider in providers
+        if (client := getattr(provider, "client", None)) is not None
+    }
+    results = await asyncio.gather(
+        *(client.close() for client in clients.values()), return_exceptions=True
+    )
+    for result in results:
+        if isinstance(result, BaseException):
+            log.warning("closing provider client failed: %s", type(result).__name__)

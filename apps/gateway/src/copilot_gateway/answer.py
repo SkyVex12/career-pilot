@@ -31,8 +31,8 @@ import logging
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Awaitable, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import AsyncGenerator, Awaitable, Mapping
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
 from uuid import UUID
@@ -42,6 +42,7 @@ from copilot_core.embed import Embedder
 from copilot_core.languages import language_instruction
 from copilot_core.llm import (
     AllRoutesFailedError,
+    AttemptEvent,
     LLMDone,
     LLMRequest,
     LLMUsage,
@@ -51,6 +52,14 @@ from copilot_core.llm import (
 )
 from copilot_core.packs import NodeRef, PreparedAnswer, cited_refs, cosine
 from copilot_core.pricing import cost_usd
+from copilot_gateway.adaptive import (
+    AnswerPlan,
+    Architecture,
+    SentenceBoundary,
+    bounded_chunks,
+    is_explicit_coding_request,
+    plan_answer,
+)
 from copilot_gateway.config import PreparedThreshold, Settings
 from copilot_protocol import models
 
@@ -78,33 +87,147 @@ _COMMAND_WORDS = _COMMAND_VERBS | {
 }  # fmt: skip
 
 
-# A citation with no real short id ("[n: n/a]", "[n:]", "[n:none]"): the client shows it as
-# text. On 2026-10-30 a fast cue carried "[n: n/a]".
-BAD_CITATION = re.compile(r"[ \t]*\[n:(?![0-9a-z]{2,8}\])[^\]\n]{0,24}\]", re.IGNORECASE)
-_HOLD_MAX = 32  # an open "[" held this long at most, waiting for its "]"
+# Validate only citation shape here, not whether an ID belongs to the supplied sources.
+_CITATION_ID_MAX = 8
 
 
 class CitationFilter:
-    """Drops broken citations from streamed text. Text after an open "[" is held until its
-    "]" arrives (a few tokens at most), so a citation split across chunks is still seen."""
+    """Drop malformed citation markup with bounded, chunk-independent state.
+
+    A malformed ``[n:`` consumes through ``]`` or the next newline, never the next
+    paragraph. At most an 11-character possible tag is held; surrounding text and
+    whitespace stream immediately. Code delimiters, escapes, simple index slices
+    and ordinary link destinations protect literal uses of the reserved syntax.
+    """
 
     def __init__(self) -> None:
         self.buf = ""
+        self._discard = False
+        self._last = ""
+        self._index_prefix = False
+        self._escaped = False
+        self._code_marker: str = ""
+        self._code_length = 0
+        self._fenced_code = False
+        self._closing_fence = False
+        self._marker: str = ""
+        self._marker_length = 0
+        self._marker_leading = False
+        self._indent: int | None = 0
+        self._link_depth = 0
+
+    def _emit(self, text: str, out: list[str]) -> None:
+        out.append(text)
+        self._last = text[-1:]
+        for char in text:
+            if char in "\r\n":
+                self._indent = 0
+            elif self._indent is not None:
+                self._indent = self._indent + 1 if char == " " and self._indent < 3 else None
+
+    def _start_marker(self, char: str, out: list[str]) -> None:
+        self._marker, self._marker_length = char, 1
+        self._marker_leading = self._indent is not None
+        self._emit(char, out)
+
+    def _finish_marker(self) -> None:
+        if self._code_marker:
+            if self._fenced_code:
+                self._closing_fence = (
+                    self._marker_leading and self._marker_length >= self._code_length
+                )
+            elif self._marker_length == self._code_length:
+                self._code_marker = ""
+        elif self._marker == "`" or (self._marker_leading and self._marker_length >= 3):
+            self._code_marker = self._marker
+            self._code_length = self._marker_length
+            self._fenced_code = self._marker_leading and self._marker_length >= 3
+        self._marker = ""
+        self._marker_length = 0
 
     def feed(self, text: str) -> str:
-        self.buf += text
-        cut = self.buf.rfind("[")
-        tail = self.buf[cut:] if cut >= 0 else ""
-        if cut >= 0 and "]" not in tail and "\n" not in tail and len(tail) <= _HOLD_MAX:
-            while cut > 0 and self.buf[cut - 1] in " \t":
-                cut -= 1
-            out, self.buf = self.buf[:cut], self.buf[cut:]
-        else:
-            out, self.buf = self.buf, ""
-        return BAD_CITATION.sub("", out)
+        out: list[str] = []
+        for char in text:
+            if self._discard:
+                if char == "]":
+                    self._discard = False
+                elif char in "\r\n":
+                    self._discard = False
+                    self._emit(char, out)
+                continue
+            if self.buf:
+                if (self.buf == "[" and char.lower() == "n") or (
+                    self.buf.lower() == "[n" and char == ":"
+                ):
+                    self.buf += char
+                    continue
+                if self.buf.lower().startswith("[n:"):
+                    if char == "]":
+                        id_length = len(self.buf) - 3
+                        if 2 <= id_length <= _CITATION_ID_MAX or (
+                            self._index_prefix and id_length <= 1
+                        ):
+                            self._emit(self.buf + char, out)
+                        self.buf = ""
+                    elif char.isascii() and char.isalnum() and len(self.buf) < 3 + _CITATION_ID_MAX:
+                        self.buf += char
+                    else:
+                        self.buf = ""
+                        if char in "\r\n":
+                            self._emit(char, out)
+                        else:
+                            self._discard = True
+                    continue
+                self._emit(self.buf, out)
+                self.buf = ""
+            if self._marker:
+                if char == self._marker:
+                    self._marker_length += 1
+                    self._emit(char, out)
+                    continue
+                self._finish_marker()
+            if self._code_marker:
+                if self._closing_fence:
+                    if char in "\r\n":
+                        self._code_marker = ""
+                        self._closing_fence = False
+                    elif char not in " \t":
+                        self._closing_fence = False
+                if char == self._code_marker:
+                    self._start_marker(char, out)
+                else:
+                    self._emit(char, out)
+                continue
+            if self._escaped:
+                self._emit(char, out)
+                self._escaped = False
+                continue
+            if self._link_depth:
+                self._emit(char, out)
+                if char == "\\":
+                    self._escaped = True
+                elif char == "(":
+                    self._link_depth += 1
+                elif char == ")":
+                    self._link_depth -= 1
+                continue
+            if char in "`~":
+                self._start_marker(char, out)
+            elif char == "\\":
+                self._emit(char, out)
+                self._escaped = True
+            elif char == "[":
+                self._index_prefix = self._last.isalnum() or self._last in ("_", "]", ")")
+                self.buf = char
+            else:
+                if char == "(" and self._last == "]":
+                    self._link_depth = 1
+                self._emit(char, out)
+        return "".join(out)
 
     def flush(self) -> str:
-        out, self.buf = BAD_CITATION.sub("", self.buf), ""
+        out = "" if self._discard or self.buf.lower().startswith("[n:") else self.buf
+        self.__init__()
         return out
 
 
@@ -132,6 +255,15 @@ def is_answer_command(text: str) -> bool:
         and any(w in _COMMAND_VERBS for w in words)
         and all(w in _COMMAND_WORDS for w in words)
     )
+
+
+@dataclass(frozen=True)
+class RequestSnapshot:
+    """One generation's immutable question and prompt evidence before async lookup."""
+
+    text: str
+    context: prompts.PromptContext
+    transcript: prompts.CallContext
 
 
 @dataclass
@@ -176,6 +308,14 @@ class Question:
     fast_ended: bool = False
     # The talking points as shown, so the deep pass goes beyond them instead of repeating.
     fast_text: str = ""
+    delta_counts: dict[str, int] = field(default_factory=dict[str, int])
+    plans: dict[str, AnswerPlan] = field(default_factory=dict[str, AnswerPlan])
+    answer_strategy: Architecture | None = None  # frozen before scheduling this generation
+    exposed: bool = False  # QuestionDetected metadata has reached the client
+    answer_exposed: bool = False  # any delta (even whitespace), done or error is irreversible
+    snapshots: dict[str, RequestSnapshot] = field(default_factory=dict[str, RequestSnapshot])
+    retained_strategy: Architecture | None = None  # last late policy choice not applied
+    preferences: dict[str, tuple[str, str]] = field(default_factory=dict[str, tuple[str, str]])
     # A screenshot question (coding mode): its shots, and the fast pass's reading of them.
     screen: "ScreenAsk | None" = None
     reading: dict[str, Any] | None = None
@@ -286,12 +426,19 @@ class AnswerHost(Protocol):
 
     def refs(self) -> dict[str, NodeRef]: ...
 
+    def prepared_source_version(self, policy: str) -> str | None:
+        """Current prepared source, or None when its freshness cannot be established."""
+        return None
+
     def llm_status(self, ok: bool) -> None: ...
 
     def cache_version(self) -> str: ...
 
     def answer_style(self) -> str:
         return "bullets"
+
+    def response_length(self) -> str:
+        return "default"
 
     def cache_extra(self) -> dict[str, str]:
         """Fields stored with an exact-repeat answer (the company it was given at)."""
@@ -306,6 +453,58 @@ class AnswerHost(Protocol):
     async def qa_put(self, qhash: str, value: Mapping[str, Any]) -> None: ...
 
 
+def _transient_before_text(events: list[AttemptEvent]) -> bool:
+    """Recovery needs complete typed evidence; mixed refusals and unknowns fail closed."""
+    if not events or any(event.job != "fast" for event in events):
+        return False
+    # A refusal is a completed first chunk, even when another route later fails.
+    # Reject any first chunk, completion, hedge cancellation, or incomplete lifecycle.
+    if any(event.status not in {"started", "failed"} for event in events):
+        return False
+    started = [event.attempt_id for event in events if event.status == "started"]
+    failures = [event for event in events if event.status == "failed"]
+    if (
+        not started
+        or len(started) != len(set(started))
+        or len(failures) != len(started)
+        or {event.attempt_id for event in failures} != set(started)
+    ):
+        return False
+    categories = {
+        "connect_error",
+        "connect_timeout",
+        "pool_timeout",
+        "read_timeout",
+        "write_timeout",
+        "provider_timeout",
+        "first_token_timeout",
+    }
+    # SDK connection_error alone includes permanent TLS/configuration failures. Only
+    # explicit abrupt-close/read/write/reset causes justify this bounded experiment.
+    closure_causes = {
+        "SSLZeroReturnError",
+        "ConnectionResetError",
+        "ReadError",
+        "WriteError",
+        "RemoteProtocolError",
+    }
+    certificate_causes = {"SSLCertVerificationError", "CertificateError"}
+    return all(
+        event.stage == "first_chunk"
+        and not certificate_causes.intersection(event.cause_types)
+        and (
+            event.http_status in {500, 502, 503, 504, 529} and event.error_category == "http_error"
+            if event.http_status is not None
+            else event.error_category in categories
+            or (
+                event.error_category == "connection_error"
+                and bool(closure_causes.intersection(event.cause_types))
+            )
+        )
+        for event in failures
+    )
+
+
 class AnswerEngine:
     def __init__(self, host: AnswerHost) -> None:
         self.host = host
@@ -315,12 +514,17 @@ class AnswerEngine:
             "deep_light": 0,
         }  # fmt: skip
         self._background: set[asyncio.Task[None]] = set()
+        # Keep ownership after speculative cards are discarded or history is evicted.
+        self._tasks: set[asyncio.Task[None]] = set()
+        self._closing = False
         # The last screen's problem, for the follow-ups after it (copilot_core.screen.Problem).
         self.problem: screen.Problem | None = None
 
     # Question lifecycle, driven by the turn detector and client messages.
 
     def add(self, q: Question) -> None:
+        q.answer_strategy = q.answer_strategy or self._selected_strategy(q)
+        q.exposed = q.exposed or not q.held
         self.questions[q.qid] = q
         while len(self.questions) > 100:
             _, old = self.questions.popitem(last=False)
@@ -373,11 +577,25 @@ class AnswerEngine:
     def _auto_deep(self, q: Question) -> None:
         """The deep pass starts on its own once the question is confirmed and its fast pass
         has ended, for the auto types; never for a question a newer one has replaced."""
+        if self.questions.get(q.qid) is not q:
+            return
         s = self.host.settings
         if q.screen is not None:
             # The code pass: started from the reading (`_on_read`), or here when the fast pass
             # ended without one (it failed, or left the header out), unless nothing is readable.
             if q.fast_ended and screen.needs_code(q.reading) and not q.superseded:
+                self.start_pass(q, "deep")
+            return
+        strategy = self.strategy(q)
+        if strategy != "legacy_dual":
+            # An independent hybrid expert can start at confirmation, without waiting
+            # for the primary. B and D run a second request only on explicit expansion.
+            if (
+                q.confirmed
+                and s.deep_pass_auto
+                and not (q.superseded or q.cancelled or q.discarded)
+                and plan_answer(q.text, q.qtype, q.depth, strategy).auto_expert
+            ):
                 self.start_pass(q, "deep")
             return
         if not s.deep_pass_auto or q.qtype not in s.deep_pass_auto_types:
@@ -426,12 +644,11 @@ class AnswerEngine:
         q = self.questions.get(qid)
         if q is None or not q.held:
             return
+        q.exposed = True
         q.held = False
         q.released_at = time.monotonic()
         if q.held_text:
-            self.host.emit(
-                models.AnswerDelta, question_id=q.qid, **{"pass": "fast"}, text="".join(q.held_text)
-            )
+            self._emit_delta(q, "fast", "".join(q.held_text))
             q.held_text.clear()
         q.released.set()
 
@@ -463,7 +680,7 @@ class AnswerEngine:
 
     def expand(self, qid: UUID) -> bool:
         q = self.questions.get(qid)
-        if q is None:
+        if q is None or q.cancelled or q.discarded or q.superseded:
             return False
         self.host.log_entry({"kind": "expand", "question_id": str(qid)})
         if "deep" not in q.tasks:
@@ -494,8 +711,24 @@ class AnswerEngine:
             q.client.setdefault(pass_, {}).update(fields)
 
     def cancel_all(self) -> None:
-        for q in self.questions.values():
-            self._cancel_tasks(q)
+        for task in self._tasks:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+
+    async def shutdown(self, *, within_s: float = 5) -> bool:
+        """Finish cancellation telemetry before the session releases its writer lease."""
+        self._closing = True
+        self.cancel_all()
+        pending: set[asyncio.Task[Any]] = set(self._tasks) | set(self._background)
+        pending.update(q.match for q in self.questions.values() if q.match is not None)
+        for task in pending:
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        if not pending:
+            return True
+        # wait_for would inject a second cancellation into provider cleanup on timeout.
+        _, unfinished = await asyncio.wait(pending, timeout=within_s)
+        return not unfinished
 
     async def change_language(self) -> None:
         """Keep completed cards while stopping language-dependent pending generation."""
@@ -544,44 +777,273 @@ class AnswerEngine:
         cost = cost_usd(
             done.model, done.service_tier, u.input_tokens, u.cached_tokens, u.output_tokens,
             s.model_prices, s.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )  # fmt: skip
         return None if cost is None else float(cost)
 
     def _cancel_tasks(self, q: Question) -> None:
         for task in q.tasks.values():
-            if not task.done():
+            if not task.done() and not task.cancelling():
                 task.cancel()
 
     def start_pass(self, q: Question, pass_: str) -> None:
-        if pass_ in q.tasks:
+        if self._closing or pass_ in q.tasks or q.cancelled or q.discarded or q.superseded:
             return
-        q.tasks[pass_] = asyncio.create_task(self._run_pass(q, pass_))
+        q.answer_strategy = q.answer_strategy or self._selected_strategy(q)
+        if self.strategy(q) != "legacy_dual" and pass_ not in q.plans:
+            q.plans[pass_] = plan_answer(
+                q.text, q.qtype, q.depth, self.strategy(q), expert=pass_ == "deep"
+            )
+        task = asyncio.create_task(self._run_pass(q, pass_))
+        q.tasks[pass_] = task
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _selected_strategy(self, q: Question) -> Architecture:
+        # Screenshot reading/code and follow-ups retain their specialized prompts.
+        if q.screen is not None or self.open_problem() is not None:
+            return "legacy_dual"
+        settings = self.host.settings
+        strategy = settings.answer_architecture
+        if (
+            strategy != "legacy_dual"
+            and settings.adaptive_technical_legacy
+            and q.qtype == "technical"
+            and plan_answer(q.text, q.qtype, q.depth, strategy).depth == "standard"
+        ):
+            return "legacy_dual"
+        return strategy
+
+    def strategy(self, q: Question) -> Architecture:
+        return q.answer_strategy or self._selected_strategy(q)
+
+    def reconcile_strategy(self, q: Question) -> Question:
+        """Replace a generation before answer content or terminal state is exposed.
+
+        Once any answer event or expert request exists, retain the frozen generation.
+        An exposed legacy card cannot become adaptive: the client may already predict its
+        dependent detail. No classifier, question cancellation or protocol reset is added.
+        """
+        if self.questions.get(q.qid) is not q or q.cancelled or q.discarded or q.superseded:
+            return q
+        desired = self._selected_strategy(q)
+        current = self.strategy(q)
+        primary = q.plans.get("fast")
+        # A delayed classifier may identify an expert question after the provisional
+        # standard request started. Upgrade only before exposure; C/D and all other
+        # depth transitions retain their existing frozen-plan behavior.
+        upgrade = (
+            current == desired == "adaptive"
+            and primary is not None
+            and primary.depth == "standard"
+            and plan_answer(q.text, q.qtype, q.depth, current).depth == "expert"
+        )
+        if desired == current and not upgrade:
+            return q
+        shown = q.exposed or not q.held
+        if (
+            q.answer_exposed
+            or q.expanded_at is not None
+            or "deep" in q.tasks
+            or q.fast_ended
+            or q.logged
+            or (shown and not upgrade and (current == "legacy_dual" or desired != "legacy_dual"))
+        ):
+            if q.retained_strategy != desired:
+                q.retained_strategy = desired
+                self.host.log_entry(
+                    {
+                        "kind": "answer_strategy_retained",
+                        "question_id": str(q.qid),
+                        "answer_strategy": current,
+                        "desired_strategy": desired,
+                        "expert_upgrade": upgrade,
+                        "reason": "answer_or_expert_exposed"
+                        if q.answer_exposed or q.expanded_at is not None or "deep" in q.tasks
+                        else "generation_stable",
+                    }
+                )
+            return q
+        # Shared matching and frozen context/preferences transfer; revised question text
+        # belongs to the replacement request. Old tasks retain only their retired object.
+        replacement = Question(
+            qid=q.qid,
+            text=q.text,
+            qtype=q.qtype,
+            confidence=q.confidence,
+            addressed=q.addressed,
+            speculative=q.speculative,
+            forced=q.forced,
+            t0=q.t0,
+            detector_ms=q.detector_ms,
+            match=q.match,
+            decided_ms=q.decided_ms,
+            depth=q.depth,
+            detected_at=q.detected_at,
+            turn_end_ms=q.turn_end_ms,
+            final_ms=q.final_ms,
+            early_ms=q.early_ms,
+            first_shown=q.first_shown,
+            held=q.held,
+            confirmed=q.confirmed,
+            released_at=q.released_at if shown else None,
+            was_speculative=q.was_speculative,
+            exposed=shown,
+            answer_strategy=desired,
+            preferences=dict(q.preferences),
+            snapshots={
+                key: value if value.text == q.text else replace(value, text=q.text)
+                for key, value in q.snapshots.items()
+            },
+        )
+        q.match = None
+        q.discarded = True
+        self._cancel_tasks(q)
+        self.host.log_entry(
+            {
+                "kind": "answer_strategy_replaced",
+                "question_id": str(q.qid),
+                "previous_strategy": current,
+                "answer_strategy": desired,
+                "reason": "pre_answer_expert_upgrade"
+                if upgrade
+                else "empty_card"
+                if shown
+                else "unexposed_held",
+            }
+        )
+        self.add(replacement)
+        if shown:
+            # Synchronous metadata update precedes every task step and replacement delta;
+            # forced/non-speculative confirmation may otherwise emit no detection at all.
+            self.host.emit(
+                models.QuestionDetected,
+                question_id=replacement.qid,
+                text=replacement.text,
+                question_type=replacement.qtype,
+                confidence=replacement.confidence,
+                speculative=replacement.speculative,
+                answer_strategy=desired,
+            )
+        return replacement
+
+    def _adaptive_evidence(self, q: Question) -> bool:
+        # A category-specific legacy prompt must not bypass adaptive deployment freshness.
+        # Explicit legacy rollback and specialized screenshot workflows stay unchanged.
+        return (
+            self.host.settings.answer_architecture != "legacy_dual"
+            and q.screen is None
+            and self.open_problem() is None
+        )
+
+    def _fresh_cache_slot(
+        self,
+        strategy: Architecture,
+        plan: AnswerPlan | None,
+        slot: str,
+        style: str,
+        version: str,
+        request: LLMRequest | None,
+    ) -> str:
+        # A model/reasoning policy change must not keep serving the old model's answer.
+        # Include fallback policy too; only hashes leave this scope, never private text.
+        routing = tuple(
+            (
+                job,
+                tuple(
+                    (route.provider.name, route.model, route.params, route.refusal_only)
+                    for route in self.host.router.routes.get(job, ())
+                ),
+            )
+            for job in ("fast", "deep", "deep_light", "adaptive_expert")
+        )
+        identity = hashlib.sha256(
+            (
+                version
+                + "\n"
+                + prompts.ADAPTIVE_PROMPT_VERSION
+                + "\n"
+                + repr(request)
+                + "\n"
+                + repr(routing)
+            ).encode()
+        ).hexdigest()[:24]
+        scope = f"{strategy}:{plan.depth}:{plan.job}" if plan is not None else "legacy-policy"
+        return f"{scope}:{slot}:style={style}:{identity}"
+
+    def _emit_delta(self, q: Question, pass_: str, text: str) -> None:
+        if (
+            not text
+            or self.questions.get(q.qid) is not q
+            or q.cancelled
+            or q.discarded
+            or q.superseded
+        ):
+            return
+        q.answer_exposed = True
+        sequence = q.delta_counts.get(pass_, 0)
+        self.host.emit(
+            models.AnswerDelta,
+            question_id=q.qid,
+            **{"pass": pass_},
+            text=text,
+            sequence=sequence,
+        )
+        q.delta_counts[pass_] = sequence + 1
 
     async def wait_idle(self) -> None:
-        tasks = [t for q in self.questions.values() for t in q.tasks.values()]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        # Completion of a primary may enqueue a dependent legacy deep pass.
+        while tasks := [task for task in self._tasks if not task.done()]:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     # One pass.
 
     async def _run_pass(self, q: Question, pass_: str) -> None:
         q.started_passes.add(pass_)
         host = self.host
-        cache_version = host.cache_version()
+        style, response_length = self._preferences(q, pass_)
+        q.preferences[pass_] = (style, response_length)
         started = time.monotonic()
         state: dict[str, Any] = {
             "first_delta_at": None, "parts": [], "start_at": None, "emitted": False,
-            "stopped": False,
+            "stopped": False, "first_sentence_at": None,
+            "stages": {}, "router_started_at": None, "raw_first_chunk_at": None,
+            "detector_depth_at_start": q.depth, "question_type_at_start": q.qtype,
+            "recovery": {},
         }  # fmt: skip
+        cache_read: asyncio.Task[None] | None = None
+        cache_value: dict[str, Any] | None = None
+        boundary = SentenceBoundary()
+        strategy = self.strategy(q)
+        plan = None
+        if strategy != "legacy_dual":
+            plan = q.plans.get(pass_) or plan_answer(
+                q.text, q.qtype, q.depth, strategy, expert=pass_ == "deep"
+            )
+            q.plans[pass_] = plan
+
+        def current() -> bool:
+            return self.questions.get(q.qid) is q and not (q.cancelled or q.discarded)
+
+        def require_current() -> None:
+            if not current():
+                raise asyncio.CancelledError
 
         def delta(text: str) -> None:
+            if not current() or q.superseded:
+                return
             if state["first_delta_at"] is None:
                 state["first_delta_at"] = time.monotonic()
             state["parts"].append(text)
+            if boundary.feed(text):
+                state["first_sentence_at"] = time.monotonic()
             if q.held:  # nothing leaves the gateway before the detector confirms
                 q.held_text.append(text)
                 return
             state["emitted"] = True
-            host.emit(models.AnswerDelta, question_id=q.qid, **{"pass": pass_}, text=text)
+            self._emit_delta(q, pass_, text)
 
         def latency(first_token_ms: int | None) -> dict[str, int]:
             out: dict[str, int] = {}
@@ -599,6 +1061,9 @@ class AnswerEngine:
                 out["first_delta_ms"] = max(0, int((shown - q.t0) * 1000))
             if q.released_at is not None:
                 out["release_ms"] = max(0, int((q.released_at - q.t0) * 1000))
+            if state["first_sentence_at"] is not None:
+                sentence_shown = max(state["first_sentence_at"], q.released_at or 0.0)
+                out["first_complete_sentence_ms"] = max(0, int((sentence_shown - q.t0) * 1000))
             out["total_ms"] = max(0, int((time.monotonic() - q.t0) * 1000))
             if q.final_ms is not None:
                 out["final_ms"] = q.final_ms
@@ -615,9 +1080,31 @@ class AnswerEngine:
             out.update(state.get("memory") or {})
             return out
 
+        def stage_timings() -> dict[str, int]:
+            # Router wait includes retries, not separately measured DNS/TLS or compute.
+            # Keep these in stored metadata; client receipt and physical paint differ.
+            out = dict(state["stages"])
+            dispatched = state["router_started_at"]
+            first = state["raw_first_chunk_at"]
+            sentence = state["first_sentence_at"]
+            if dispatched is not None:
+                out["answer_prepare_ms"] = max(0, round((dispatched - started) * 1000))
+                out["model_dispatch_ms"] = max(0, round((dispatched - q.t0) * 1000))
+            if first is not None and dispatched is not None:
+                out["router_first_chunk_ms"] = max(0, round((first - dispatched) * 1000))
+            if sentence is not None and first is not None:
+                out["stream_sentence_ms"] = max(0, round((sentence - first) * 1000))
+            if sentence is not None and q.released_at is not None:
+                out["sentence_release_wait_ms"] = max(0, round((q.released_at - sentence) * 1000))
+            return out
+
         def done(
             source: str, refs: list[NodeRef], done_info: LLMDone | None, first_token_ms: int | None
         ) -> None:
+            require_current()
+            q.answer_exposed = True
+            if boundary.feed("", final=True):
+                state["first_sentence_at"] = time.monotonic()
             usage = done_info.usage if done_info else None
             tier = done_info.service_tier if done_info else "standard"
             if pass_ == "fast":
@@ -640,13 +1127,38 @@ class AnswerEngine:
                 },
                 source=source,
                 latency_ms=lat,
+                delta_count=q.delta_counts.get(pass_, 0),
             )
             # Stored with the answer only: which route answered, and the client's first word
             # if its latency.report came before this.
+            configured_reasoning: dict[str, Any] = {}
+            routes = host.router.routes.get(str(state.get("job")), [])
+            if done_info is not None and 0 <= done_info.attempt < len(routes):
+                params = routes[done_info.attempt].params
+                configured_reasoning = {
+                    key: params[key]
+                    for key in ("reasoning", "thinking", "output_config")
+                    if key in params
+                }
             stored = {
                 **lat,
+                **stage_timings(),
+                **state["recovery"],
                 "provider": done_info.provider if done_info else source,
                 "fallback_attempt": done_info.attempt if done_info else 0,
+                "stop_reason": done_info.stop_reason if done_info else None,
+                # Existing worker persistence keeps this metadata in answers.latency_ms.
+                "answer_strategy": strategy,
+                "prompt_version": prompts.ADAPTIVE_PROMPT_VERSION if plan is not None else None,
+                "answer_style": style,
+                "response_length": response_length,
+                "answer_depth": plan.depth if plan is not None else None,
+                "question_type_at_start": state["question_type_at_start"],
+                "detector_depth_at_start": state["detector_depth_at_start"],
+                "detector_depth_at_completion": q.depth,
+                "configured_reasoning": configured_reasoning,
+                "request_job": state.get("job"),
+                "max_output_tokens": state["req"].max_tokens if "req" in state else None,
                 **q.client.pop(pass_, {}),
             }
             q.logged.add(pass_)
@@ -670,54 +1182,141 @@ class AnswerEngine:
                     "input_tokens": usage.input_tokens if usage else 0,
                     "cached_tokens": usage.cached_tokens if usage else 0,
                     "output_tokens": usage.output_tokens if usage else 0,
+                    "reasoning_tokens": usage.reasoning_tokens if usage else None,
+                    "cache_write_tokens": usage.cache_write_tokens if usage else None,
+                    "cache_write_30m_tokens": usage.cache_write_30m_tokens if usage else None,
+                    "cache_write_12h_tokens": usage.cache_write_12h_tokens if usage else None,
                     "cost_usd": self._cost(done_info),
                     "latency_ms": stored,
                     "memory_node_ids": [str(r.node_id) for r in refs],
                     # The deep pass ran because the user tapped expand, not on its own.
                     "expanded": pass_ == "deep" and q.expanded_at is not None,
+                    "answer_strategy": strategy,
+                    "answer_style": style,
+                    "response_length": response_length,
+                    "answer_depth": plan.depth if plan is not None else None,
+                    "request_job": state.get("job"),
+                    "max_output_tokens": state["req"].max_tokens if "req" in state else None,
                 }
             )
 
         async def shown() -> None:
             """A held pass waits here for the detector before it ends; if the detector says
             no, `discard` cancels it here and it ends unseen."""
+            require_current()
             if q.held:
                 await q.released.wait()
+            require_current()
 
         def error(code: str) -> None:
+            if not current():
+                return
+            q.answer_exposed = True
             host.emit(models.AnswerError, question_id=q.qid, **{"pass": pass_}, code=code)
             host.log_entry(
-                {"kind": "answer_error", "question_id": str(q.qid), "pass": pass_, "code": code}
+                {
+                    "kind": "answer_error",
+                    "question_id": str(q.qid),
+                    "pass": pass_,
+                    "code": code,
+                    **state["recovery"],
+                }
             )
 
-        async def prepared(answer: PreparedAnswer) -> None:
+        async def prepared(answer: PreparedAnswer) -> bool:
+            if self._adaptive_evidence(q):
+                # Nothing prepared enters held_text: release must first expose the latest
+                # transcript/source state. A changed fact falls through to fresh generation.
+                await shown()
+                if self._prepared(q) is not answer:
+                    return False
             self.stats["prepared_hits"] += 1
             delta("\n".join(f"- {p}" for p in answer.talking_points) + "\n")
             await shown()
             done("prepared", self._refs_for_nodes(answer), None, None)
+            return True
 
         try:
             if pass_ == "fast":
                 state["start_at"] = time.monotonic()
-                answer = self._prepared(q)
-                if answer is not None:  # the match is already in: no model call
-                    await prepared(answer)
-                    return
-            qhash = question_hash(q.text)
+                answer = self._prepared(q) if response_length == "default" else None
+                if answer is not None and await prepared(answer):
+                    return  # the match is current at display time: no model call
+            # Prepared validation can wait for a final or a changed source. Snapshot
+            # only when fresh generation begins, before retrieval/cache awaits.
+            require_current()
+            snapshot = q.snapshots.get(pass_) or self._request_snapshot(q)
+            q.snapshots[pass_] = snapshot
+            cache_version = host.cache_version()
+            qhash = question_hash(snapshot.text)
             # A follow has the question's text but continues the user: never the cache. Nor
             # a screenshot: its text says what the screen holds, not what it asks; nor a
             # question while a problem is open: "optimize it" means that problem.
             reuse = (
                 not host.settings.personal_ai_api_url
-                and cacheable(q.text)
+                and cacheable(snapshot.text)
                 and q.qtype != "follow"
                 and q.screen is None
                 and self.open_problem() is None
             )
             # A paragraph deep answer is cached apart from a bulleted one.
-            style = host.answer_style()
             slot = pass_ if pass_ == "fast" or style == "bullets" else f"{pass_}_{style}"
-            cached = await self._cached(qhash, slot, cache_version) if reuse else None
+            if response_length != "default":
+                slot += f":length={response_length}"
+            memory_pass = "deep" if plan is not None else pass_
+            memory: list[str] | None = None
+            candidate_req: LLMRequest | None = None
+            fresh_cache = self._adaptive_evidence(q)
+            if fresh_cache:
+                if reuse:
+
+                    async def prefetch_cache() -> None:
+                        nonlocal cache_value
+                        lookup_started = time.monotonic()
+                        try:
+                            cache_value = await self._cache_value(qhash)
+                        finally:
+                            # Full lookup duration, including work overlapped with retrieval.
+                            state["stages"]["cache_lookup_ms"] = round(
+                                (time.monotonic() - lookup_started) * 1000
+                            )
+
+                    cache_read = asyncio.create_task(prefetch_cache())
+                    # Retain ownership even if this pass is cancelled again during cleanup.
+                    self._tasks.add(cache_read)
+                    cache_read.add_done_callback(self._tasks.discard)
+                # A digest/pack version does not version live company memory. Resolve
+                # the same bounded evidence we would generate with before reusing an
+                # answer, and freeze the request so later speech cannot change its key.
+                state["start_at"] = time.monotonic()
+                context_started = time.monotonic()
+                memory, state["memory"] = await host.memory_lines(snapshot.text, memory_pass)
+                require_current()
+                state["stages"]["context_wait_ms"] = round(
+                    (time.monotonic() - context_started) * 1000
+                )
+                if not host.settings.personal_ai_api_url:
+                    prompt_started = time.monotonic()
+                    candidate_req = self._request(q, pass_, memory, snapshot=snapshot)
+                    state["stages"]["prompt_build_ms"] = round(
+                        (time.monotonic() - prompt_started) * 1000
+                    )
+                slot = self._fresh_cache_slot(
+                    strategy, plan, slot, style, cache_version, candidate_req
+                )
+            if cache_read is not None:
+                await asyncio.shield(cache_read)
+                require_current()
+                # A prefetched value is eligible only for the freshly resolved evidence.
+                cached = self._cache_entry(cache_value, slot, cache_version)
+            else:
+                cache_started = time.monotonic()
+                cached = await self._cached(qhash, slot, cache_version) if reuse else None
+                if reuse:
+                    state["stages"]["cache_lookup_ms"] = round(
+                        (time.monotonic() - cache_started) * 1000
+                    )
+            require_current()
             if cached is not None and not self._repeats_cues(q, cached["text"]):
                 self.stats["cache_hits"] += 1
                 delta(cached["text"])
@@ -726,27 +1325,156 @@ class AnswerEngine:
                 done("cache", refs, None, None)
                 return
             self.stats["model_passes"] += 1
-            state["start_at"] = time.monotonic()
+            if not fresh_cache:
+                state["start_at"] = time.monotonic()
             if q.screen is not None:
                 job = "screen" if pass_ == "fast" else "screen_code"
             else:
-                job = self.deep_job(q) if pass_ == "deep" else pass_
+                job = (
+                    plan.job
+                    if plan is not None
+                    else (self.deep_job(q) if pass_ == "deep" else pass_)
+                )
+            # Keep the frozen plan/public pass; isolate only the actual adaptive expert route.
+            if (
+                plan is not None
+                and job == "deep"
+                and host.settings.adaptive_expert_route is not None
+            ):
+                job = "adaptive_expert"
             state["job"] = job
             if job == "deep_light":
                 self.stats["deep_light"] += 1
-            memory, memory_stats = (
-                await host.memory_lines(q.text, pass_) if q.screen is None else ([], {})
-            )
-            state["memory"] = memory_stats
+            if memory is None:
+                context_started = time.monotonic()
+                memory, state["memory"] = (
+                    await host.memory_lines(snapshot.text, memory_pass)
+                    if q.screen is None
+                    else ([], {})
+                )
+                state["stages"]["context_wait_ms"] = round(
+                    (time.monotonic() - context_started) * 1000
+                )
             if host.settings.personal_ai_api_url:
                 private = getattr(host, "private_memory", None)
                 if private is not None:
+                    context_started = time.monotonic()
                     memory = [*memory, *(await private())]
-            req = self._request(q, pass_, memory)
+                    state["stages"]["private_context_wait_ms"] = round(
+                        (time.monotonic() - context_started) * 1000
+                    )
+            require_current()
+            if candidate_req is not None:
+                req = candidate_req
+            else:
+                prompt_started = time.monotonic()
+                req = self._request(q, pass_, memory, snapshot=snapshot)
+                state["stages"]["prompt_build_ms"] = round(
+                    (time.monotonic() - prompt_started) * 1000
+                )
             state["req"] = req
 
+            attempt_events: list[AttemptEvent] = []
+
+            def on_attempt(event: AttemptEvent) -> None:
+                attempt_events.append(event)
+                # This ledger includes abandoned retries; do not sum it with answer costs.
+                entry = {
+                    **asdict(event),
+                    "kind": "provider_attempt",
+                    "question_id": str(q.qid),
+                    "pass": pass_,
+                    "answer_strategy": strategy,
+                    "usage_observed": event.usage is not None,
+                    **state["recovery"],
+                }
+                if event.usage is not None:
+                    entry["cost_usd"] = self._cost(
+                        LLMDone(
+                            usage=event.usage,
+                            stop_reason=None,
+                            model=event.model,
+                            service_tier=event.service_tier or "standard",
+                        )
+                    )
+                host.log_entry(entry)
+
             def on_fallback(job: str, route: Route, reason: str) -> None:
-                host.llm_status(False)
+                if current():
+                    host.llm_status(False)
+
+            async def routed_chunks() -> AsyncGenerator[str | LLMDone]:
+                try:
+                    async with contextlib.aclosing(
+                        host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
+                    ) as primary:
+                        async for chunk in primary:
+                            yield chunk
+                except AllRoutesFailedError as failure:
+                    recovery_routes = host.router.routes.get("answer_recovery", [])
+                    current = asyncio.current_task()
+                    if (
+                        not host.settings.adaptive_failure_recovery
+                        or strategy not in {"adaptive", "adaptive_on_demand"}
+                        or pass_ != "fast"
+                        or plan is None
+                        or plan.job != "fast"
+                        or job != "fast"
+                        or failure.refused
+                        or self._closing
+                        or q.cancelled
+                        or q.discarded
+                        or q.superseded
+                        or (current is not None and current.cancelling())
+                        or state["raw_first_chunk_at"] is not None
+                        or state["parts"]
+                        or state["emitted"]
+                        or q.held_text
+                        or q.fast_text
+                        or q.delta_counts.get(pass_, 0)
+                        or not _transient_before_text(attempt_events)
+                        or len(recovery_routes) != 1
+                        or recovery_routes[0].refusal_only
+                        or host.router.hedge_after_s.get("answer_recovery")
+                    ):
+                        raise
+                    route = recovery_routes[0]
+                    recovery = {
+                        "failure_recovery": True,
+                        "failure_recovery_reason": "transient_primary_exhausted_before_text",
+                        "failure_recovery_start_ms": max(0, int((time.monotonic() - q.t0) * 1000)),
+                        "failure_recovery_primary_job": job,
+                        "failure_recovery_job": "answer_recovery",
+                        "failure_recovery_model": route.model,
+                        "failure_recovery_provider": route.provider.name,
+                        "failure_recovery_categories": sorted(
+                            {
+                                event.error_category
+                                for event in attempt_events
+                                if event.status == "failed" and event.error_category is not None
+                            }
+                        ),
+                    }
+                    state["recovery"] = recovery
+                    state["job"] = "answer_recovery"
+                    host.log_entry(
+                        {
+                            "kind": "answer_recovery",
+                            "question_id": str(q.qid),
+                            "pass": pass_,
+                            "answer_strategy": strategy,
+                            **recovery,
+                        }
+                    )
+                    # Same original frozen question/evidence/depth/output cap, no quick
+                    # answer expansion. The outer bounded_chunks still owns ONE deadline.
+                    async with contextlib.aclosing(
+                        host.router.stream(
+                            "answer_recovery", req, on_fallback, on_attempt=on_attempt
+                        )
+                    ) as recovered:
+                        async for chunk in recovered:
+                            yield chunk
 
             async def stream() -> LLMDone:
                 finished: LLMDone | None = None
@@ -763,12 +1491,29 @@ class AnswerEngine:
                         self._on_read(q, reader.reading)
                     return text
 
-                async for chunk in host.router.stream(job, req, on_fallback):
+                chunks = (
+                    routed_chunks()
+                    if host.settings.adaptive_failure_recovery
+                    else host.router.stream(job, req, on_fallback, on_attempt=on_attempt)
+                )
+                if strategy != "legacy_dual":
+                    chunks = bounded_chunks(
+                        chunks,
+                        host.settings.adaptive_stream_idle_timeout_s,
+                        host.settings.adaptive_stream_total_timeout_s,
+                    )
+                state["router_started_at"] = time.monotonic()
+                async for chunk in chunks:
                     if isinstance(chunk, LLMDone):
                         finished = chunk
                         state["done"] = chunk
-                    elif text := shown_text(chunk):
-                        delta(text)
+                    else:
+                        require_current()
+                        if chunk and state["raw_first_chunk_at"] is None:
+                            state["raw_first_chunk_at"] = time.monotonic()
+                        if text := shown_text(chunk):
+                            delta(text)
+                require_current()
                 rest = cites.flush() if q.screen is None else (reader.flush() if reader else "")
                 if rest:
                     delta(rest)
@@ -778,17 +1523,26 @@ class AnswerEngine:
             model = asyncio.ensure_future(stream())
             state["model"] = model
             match = q.match
-            if pass_ == "fast" and match is not None and not match.done():
+            if (
+                strategy == "legacy_dual"
+                and pass_ == "fast"
+                and match is not None
+                and not match.done()
+            ):
+                # Candidates keep already-dispatched model progress rather than cancel it
+                # for a late prepared hit that could become stale before held release.
                 # The model does not wait for the prepared match (a forced question's match
                 # starts with it; an OpenAI embedding takes 0.5 s or more). A hit that comes
                 # before any of the model's text reached the client takes the slot over.
                 await asyncio.wait({match, model}, return_when=asyncio.FIRST_COMPLETED)
-                answer = self._prepared(q)
+                answer = self._prepared(q) if response_length == "default" else None
                 if answer is not None and not state["emitted"]:
                     model.cancel()
                     await asyncio.gather(model, return_exceptions=True)
                     self._log_cancelled(q, pass_, state, reason="prepared")
-                    state.update(first_delta_at=None, parts=[])
+                    state.update(first_delta_at=None, first_sentence_at=None, parts=[])
+                    state.update(router_started_at=None, raw_first_chunk_at=None, stages={})
+                    boundary = SentenceBoundary()
                     for key in ("req", "done", "model"):
                         state.pop(key, None)
                     q.held_text.clear()
@@ -805,11 +1559,28 @@ class AnswerEngine:
             text = "".join(state["parts"])
             refs = cited_refs(text, host.refs()) if q.screen is None else []
             done("model", refs, done_info, done_info.first_token_ms)
-            if not q.cancelled and not q.superseded and host.store_text() and reuse:
+            if (
+                current()
+                and not q.superseded
+                and host.store_text()
+                and reuse
+                and not state["recovery"]
+            ):
                 task = asyncio.create_task(self._cache_put(qhash, slot, text, refs, cache_version))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
+        except TimeoutError:
+            state["stopped"] = True
+            self._log_cancelled(q, pass_, state, reason="timeout")
+            if current():
+                host.llm_status(False)
+                await shown()
+                error("timeout")
         except AllRoutesFailedError as e:
+            if not current():
+                state["stopped"] = True
+                self._log_cancelled(q, pass_, state)
+                return
             log.warning("%s pass failed for %s: %s", pass_, q.qid, e)
             await shown()
             if e.refused:  # every model that ran declined: not an outage
@@ -827,23 +1598,39 @@ class AnswerEngine:
             self._log_cancelled(q, pass_, state)
             raise
         except Exception:
+            if not current():
+                state["stopped"] = True
+                self._log_cancelled(q, pass_, state)
+                return
             log.exception("%s pass crashed for %s", pass_, q.qid)
             error("internal")
         finally:
-            log.debug(
-                "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
-            )
-            if pass_ == "fast" and not state["stopped"]:
-                # Done, failed or refused: the deep pass may start now.
-                q.fast_ended = True
-                self._auto_deep(q)
+            try:
+                if cache_read is not None and not cache_read.done():
+                    if not cache_read.cancelling():
+                        cache_read.cancel()
+                    # wait does not inject another cancellation into the read's cleanup.
+                    # The engine retains the child if this pass is interrupted again.
+                    await asyncio.wait({cache_read})
+            except asyncio.CancelledError:
+                state["stopped"] = True
+                raise
+            finally:
+                log.debug(
+                    "%s pass for %s took %.0f ms", pass_, q.qid, (time.monotonic() - started) * 1000
+                )
+                if pass_ == "fast" and not state["stopped"] and current():
+                    # Done, failed or refused: the deep pass may start now.
+                    q.fast_ended = True
+                    self._auto_deep(q)
 
     def _log_cancelled(
         self, q: Question, pass_: str, state: Mapping[str, Any], reason: str | None = None
     ) -> None:
         """A pass stopped before its end still costs what the provider read and wrote, but the
-        stream ends without usage: logged with an estimate (about 4 characters a token, the
-        system blocks counted as cached), so speculative waste and its cost can be measured."""
+        stream ends without usage: log a visible-text estimate (about 4 characters a token).
+        Cache hits and unobserved output/reasoning are unknown. Assume no cache discount,
+        label the estimate, and never mistake it for billed usage or an upper bound."""
         if reason is not None:
             pass  # the caller knows: a prepared answer took the slot over
         elif q.superseded:
@@ -863,6 +1650,14 @@ class AnswerEngine:
             "reason": reason,
             "model_started": "req" in state,
             "streamed_chars": sum(len(p) for p in state["parts"]),
+            "answer_strategy": self.strategy(q),
+            "response_length": self._preferences(q, pass_)[1],
+            "request_job": state.get("job"),
+            "question_type_at_start": state.get("question_type_at_start"),
+            "detector_depth_at_start": state.get("detector_depth_at_start"),
+            "question_type_at_cancellation": q.qtype,
+            "detector_depth_at_cancellation": q.depth,
+            **state.get("recovery", {}),
         }
         req = cast(LLMRequest | None, state.get("req"))
         routes = self.host.router.routes.get(str(state.get("job") or pass_)) or []
@@ -872,9 +1667,15 @@ class AnswerEngine:
             u = finished.usage
             entry.update(
                 model=finished.model,
+                tier=finished.service_tier,
+                stop_reason=finished.stop_reason,
                 input_tokens=u.input_tokens,
                 cached_tokens=u.cached_tokens,
                 output_tokens=u.output_tokens,
+                reasoning_tokens=u.reasoning_tokens,
+                cache_write_tokens=u.cache_write_tokens,
+                cache_write_30m_tokens=u.cache_write_30m_tokens,
+                cache_write_12h_tokens=u.cache_write_12h_tokens,
                 cost_usd=self._cost(finished),
             )
         elif req is not None and routes:
@@ -882,26 +1683,82 @@ class AnswerEngine:
             user = len(str(req.content)) // 4
             output = entry["streamed_chars"] // 4
             done = LLMDone(
-                usage=LLMUsage(
-                    input_tokens=system + user, cached_tokens=system, output_tokens=output
-                ),
+                usage=LLMUsage(input_tokens=system + user, cached_tokens=0, output_tokens=output),
                 stop_reason=None,
                 model=routes[0].model,
             )
             entry.update(
                 model=routes[0].model,
                 input_tokens_est=system + user,
+                cached_tokens_est=0,
                 output_tokens_est=output,
+                estimation_method="visible_chars_div_4_assume_uncached",
+                estimated_route=routes[0].label,
+                cost_tier_assumption="standard",
                 cost_usd_est=self._cost(done),
             )
         self.host.log_entry(entry)
 
-    def _request(self, q: Question, pass_: str, memory: list[str] | None = None) -> LLMRequest:
-        s = self.host.settings
-        ctx = self.host.prompt_context()
+    def _request(
+        self,
+        q: Question,
+        pass_: str,
+        memory: list[str] | None = None,
+        *,
+        snapshot: RequestSnapshot | None = None,
+    ) -> LLMRequest:
+        snapshot = snapshot or self._request_snapshot(q)
+        req = self._base_request(q, pass_, memory, snapshot=snapshot)
+        _, length = self._preferences(q, pass_)
+        if length == "default":
+            return req
+        # A preference changes the next request, never an in-flight stream. Screens keep
+        # their code budget; Concise also preserves classified or explicit spoken coding.
+        # Local recognition uses this request's snapshot and never changes detector state.
+        limit = req.max_tokens
+        if q.screen is None and self.open_problem() is None:
+            coding = q.qtype == "coding" or (
+                self.strategy(q) != "legacy_dual" and is_explicit_coding_request(snapshot.text)
+            )
+            if length == "concise" and not coding:
+                limit = min(limit, max(100, round(limit * 0.6)))
+            elif length == "detailed" and self.strategy(q) != "legacy_dual":
+                limit = min(self.host.settings.adaptive_max_tokens, round(limit * 1.5))
+        return prompts.with_response_length(
+            req,
+            length,
+            max_tokens=limit,
+            interview_drafting=(
+                snapshot.context.mode == "interview"
+                and self.strategy(q) != "legacy_dual"
+                and q.screen is None
+                and self.open_problem() is None
+            ),
+        )
+
+    def _preferences(self, q: Question, pass_: str) -> tuple[str, str]:
+        return q.preferences.get(pass_) or (
+            self.host.answer_style(),
+            getattr(self.host, "response_length", lambda: "default")(),
+        )
+
+    def _request_snapshot(self, q: Question) -> RequestSnapshot:
         transcript = self.host.call_context()
         if q.screen is None and self.open_problem() is None:
             transcript = replace(transcript, suggestions=self._earlier_suggestions(q))
+        return RequestSnapshot(q.text, self.host.prompt_context(), transcript)
+
+    def _base_request(
+        self,
+        q: Question,
+        pass_: str,
+        memory: list[str] | None = None,
+        *,
+        snapshot: RequestSnapshot | None = None,
+    ) -> LLMRequest:
+        s = self.host.settings
+        snapshot = snapshot or self._request_snapshot(q)
+        ctx, transcript, text = snapshot.context, snapshot.transcript, snapshot.text
         memory = memory or []
         if q.screen is not None:
             ask = q.screen
@@ -927,16 +1784,31 @@ class AnswerEngine:
                 req, system=[*req.system, SystemBlock(language_instruction(ctx.spoken_language))]
             )
         problem = self.open_problem()
+        if self.strategy(q) != "legacy_dual":
+            plan = q.plans.get(pass_) or plan_answer(
+                text, q.qtype, q.depth, self.strategy(q), expert=pass_ == "deep"
+            )
+            return prompts.adaptive_pass(
+                ctx,
+                transcript,
+                text,
+                None if q.held else q.qtype,
+                min(plan.max_tokens, s.adaptive_max_tokens),
+                memory,
+                depth=plan.depth,
+                style=self._preferences(q, pass_)[0],
+                expert=pass_ == "deep",
+            )
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.
             qtype = None if q.held else q.qtype
             follow = screen.follow_up(problem, ctx.user_name, deep=False) if problem else None
             return prompts.fast_pass(
-                ctx, transcript, q.text, qtype, s.fast_pass_max_tokens, memory, problem=follow
+                ctx, transcript, text, qtype, s.fast_pass_max_tokens, memory, problem=follow
             )
         return prompts.deep_pass(
-            ctx, transcript, q.text, q.qtype, s.deep_pass_max_tokens, memory,
-            style=self.host.answer_style(), shown=q.fast_text,
+            ctx, transcript, text, q.qtype, s.deep_pass_max_tokens, memory,
+            style=self._preferences(q, pass_)[0], shown=q.fast_text,
             problem=screen.follow_up(problem, ctx.user_name, deep=True) if problem else None,
             images=screen.shot_blocks(problem.shots) if problem else (),
         )  # fmt: skip
@@ -1026,6 +1898,30 @@ class AnswerEngine:
         result = self._match_result(q)
         answer = result.answer if result is not None else None
         if answer is not None:
+            if self._adaptive_evidence(q):
+                # Citation IDs and a question match do not establish semantic grounding.
+                # Versioned provenance narrows eligibility; it is not human verification.
+                version_for = getattr(self.host, "prepared_source_version", None)
+                if (
+                    any("[~]" in p for p in answer.talking_points)
+                    or not answer.grounding_policy
+                    or not answer.evidence_version
+                    or version_for is None
+                    or version_for(answer.grounding_policy) != answer.evidence_version
+                ):
+                    return None
+                # The pack predates this conversation. Any earlier evidence must be
+                # reconciled by live generation, even if no lexical contradiction is found.
+                call = self.host.call_context()
+                if call.summary.strip() or call.answers.strip():
+                    return None
+                for line in call.recent.splitlines():
+                    line = re.sub(r"^\[\d+:\d+\]\s*", "", line.strip())
+                    if line and (
+                        not line.startswith("Them: ")
+                        or normalize_question(line[6:]) != normalize_question(q.text)
+                    ):
+                        return None
             text = "\n".join(f"- {p}" for p in answer.talking_points)
             if self._repeats_cues(q, text):
                 return None
@@ -1044,13 +1940,20 @@ class AnswerEngine:
         by_id = {r.node_id: r for r in self.host.refs().values()}
         return [by_id.get(n) or NodeRef(node_id=n, label=answer.question) for n in answer.node_ids]
 
+    async def _cache_value(self, qhash: str) -> dict[str, Any] | None:
+        try:
+            return await asyncio.wait_for(self.host.qa_get(qhash), CACHE_READ_TIMEOUT_S)
+        except Exception:
+            return None
+
     async def _cached(
         self, qhash: str, pass_: str, version: str | None = None
     ) -> dict[str, Any] | None:
-        try:
-            value = await asyncio.wait_for(self.host.qa_get(qhash), CACHE_READ_TIMEOUT_S)
-        except Exception:
-            return None
+        return self._cache_entry(await self._cache_value(qhash), pass_, version)
+
+    def _cache_entry(
+        self, value: dict[str, Any] | None, pass_: str, version: str | None = None
+    ) -> dict[str, Any] | None:
         if not value or value.get("v") != (version or self.host.cache_version()):
             return None
         entry: Any = value.get(pass_)
@@ -1081,6 +1984,8 @@ class AnswerEngine:
                 "addressed_to_user": q.addressed,
                 "speculative_kept": kept,
                 "forced_by_hotkey": q.forced,
+                "answer_strategy": self.strategy(q),
+                "detector_depth": q.depth,
                 "detected_at": q.detected_at.isoformat(),
             }
         )

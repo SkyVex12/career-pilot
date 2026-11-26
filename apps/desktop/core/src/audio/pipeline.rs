@@ -19,7 +19,7 @@ use super::clock::{Fifo, PRIME_MS, Ticker};
 use super::framer::SpeechFramer;
 use super::source::{AudioSource, CaptureError, Packet};
 use super::vad::{ChannelVad, VadEvent};
-use super::{OutFrame, TICK_SAMPLES, samples_to_ms, to_i16};
+use super::{FrameDuration, OutFrame, TICK_SAMPLES, samples_to_ms, to_i16};
 
 /// What a tick produced, for the network client and the UI.
 #[derive(Debug, Default)]
@@ -52,12 +52,21 @@ pub struct Pipeline {
 
 impl Pipeline {
     pub fn new(aec: Box<dyn EchoCanceller>, them_vad: ChannelVad, me_vad: ChannelVad) -> Self {
+        Self::with_frame_duration(aec, them_vad, me_vad, FrameDuration::default())
+    }
+
+    pub fn with_frame_duration(
+        aec: Box<dyn EchoCanceller>,
+        them_vad: ChannelVad,
+        me_vad: ChannelVad,
+        duration: FrameDuration,
+    ) -> Self {
         Self {
             aec,
             them_vad,
             me_vad,
-            them_framer: SpeechFramer::new(CHANNEL_THEM),
-            me_framer: SpeechFramer::new(CHANNEL_ME),
+            them_framer: SpeechFramer::with_frame_duration(CHANNEL_THEM, duration),
+            me_framer: SpeechFramer::with_frame_duration(CHANNEL_ME, duration),
             tick: 0,
             me_clean: vec![0.0; TICK_SAMPLES],
         }

@@ -45,9 +45,12 @@ from urllib.parse import urlsplit, urlunsplit
 from copilot_evals.answer_eval import (
     GRADE_SCHEMA,
     _pass_summary,  # pyright: ignore[reportPrivateUsage]
+    add_cost,
     call_cost,
     cell,
+    format_cost,
     grade_cell,
+    summarize_costs,
     summary_table,
     text_metrics,
 )
@@ -487,7 +490,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         rs = [r for r in rows if r["pass"] == pass_ and r.get("grade")]
         if rs:
             out.setdefault("all", {})[pass_] = _pass_summary(rs)
-    out["cost_usd"] = round(sum(r.get("cost_usd", 0.0) for r in rows), 4)
+    out.update(summarize_costs(rows))
     return out
 
 
@@ -589,8 +592,9 @@ async def cmd_run(args: argparse.Namespace) -> int:
                             )
                         text, done = await router.complete(pass_, req)
                         row["answer"] = text.strip()
-                        row["cost_usd"] += call_cost(settings, done)
+                        add_cost(row, call_cost(settings, done))
                     except Exception as e:
+                        add_cost(row, None)
                         row["answer"], row["error"] = "", f"{type(e).__name__}: {e}"
                         return row
                     row["metrics"] = text_metrics(row["answer"], shown.known)
@@ -598,9 +602,10 @@ async def cmd_run(args: argparse.Namespace) -> int:
                     for attempt in range(2):
                         try:
                             row["grade"], done = await grade(grader, args.grader, gin)
-                            row["cost_usd"] += call_cost(settings, done)
+                            add_cost(row, call_cost(settings, done))
                             break
                         except Exception as e:
+                            add_cost(row, None)
                             row["grade_error"] = f"{type(e).__name__}: {e}"
                             if attempt:
                                 break
@@ -634,7 +639,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
     for mode in ("standup", "meeting"):
         if mode in summary:
             print(f"\n{mode}:\n" + summary_table({args.label: summary[mode]}))
-    print(f"\nCost: ${summary['cost_usd']:.2f}")
+    print(f"\nCost: {format_cost(summary)}")
     errors = [r for r in rows if r.get("error") or not r.get("grade")]
     if errors:
         print(f"{len(errors)} answers without a grade: {[r['id'] for r in errors]}")

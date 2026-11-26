@@ -4,12 +4,27 @@ Live tuning settings carry the defaults from ARCHITECTURE.md ("Settings"). They 
 environment (prefix COPILOT_) or a .env file for now; AWS AppConfig replaces that later.
 """
 
-from typing import Annotated, Literal
+import json
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import NoDecode
 
 from copilot_core.config import CoreSettings, ReasoningEffort, split_list
+from copilot_core.pricing import model_key
+
+
+def fastest_deep_tier(model: str | None) -> Literal["ultrafast"] | None:
+    """Only opt documented models into Ultrafast; unknown models keep their default."""
+    # Verified 2026-11-26: https://developers.openai.com/api/docs/guides/ultrafast-mode
+    if model and model_key(model) in {
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+    }:
+        return "ultrafast"
+    return None
 
 
 class PreparedThreshold(BaseModel):
@@ -51,6 +66,48 @@ QuestionType = Literal[
 ]
 
 
+class AdaptiveExpertRoute(BaseModel):
+    """Explicit OpenAI route for adaptive expert answers; no global deep overrides.
+
+    Null reasoning/tier omits that wire field; null retry tier keeps the primary
+    tier. Null first-token timeout uses the router default; null hedge disables it.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    model: str = Field(strict=True, min_length=1)
+    reasoning: ReasoningEffort | None = None
+    service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = None
+    retry_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = None
+    first_token_timeout_ms: int | None = Field(default=None, strict=True, gt=0)
+    hedge_ms: int | None = Field(default=None, strict=True, gt=0)
+
+    @field_validator("model")
+    @classmethod
+    def _exact_model_id(cls, value: str) -> str:
+        if not value.strip() or value != value.strip():
+            raise ValueError("Adaptive expert model must be a nonempty exact model ID")
+        return value
+
+
+def _openai_only(values: dict[str, Any]) -> bool:
+    # Promote only the evaluated topology; mixed and other-provider deployments retain
+    # their existing defaults. Explicit constructor/environment fields skip factories.
+    return values.get("llm_providers") == ["openai"]
+
+
+def _default_adaptive_expert(values: dict[str, Any]) -> AdaptiveExpertRoute | None:
+    if not _openai_only(values):
+        return None
+    return AdaptiveExpertRoute(
+        model="gpt-6.2-sol",
+        reasoning="low",
+        service_tier="ultrafast",
+        retry_tier="fast",
+        first_token_timeout_ms=20000,
+        hedge_ms=None,
+    )
+
+
 class Settings(CoreSettings):
     """Shared fields (auth, Claude providers and models, Valkey, the queue) are in
     `CoreSettings`; these are the gateway's own."""
@@ -76,6 +133,18 @@ class Settings(CoreSettings):
     early_decision_interval_ms: int | None = 700
     # The early decision in interviews too, not only standups and meetings (2026-11-16).
     early_decision_all_modes: bool = True
+    # Experimental hidden drafts from unchanged, unpunctuated question partials.
+    # Keep disabled until speech replays establish accuracy and cancellation overhead.
+    early_stable_partial_ms: int | None = Field(default=None, ge=100, le=2000)
+    # Reused early work with a positive detector decision and matching final transcript
+    # may bypass the display floor; confirmation and interruption rules still apply.
+    early_final_release: bool = False
+    # Recheck committed transcript revisions before the delayed utterance-flush ACK.
+    # Ordinary segment finals still do not confirm an entire spoken turn.
+    committed_final_recheck: bool = False
+    # Re-arm a silent, still-current turn when its first transcript arrives after
+    # the ordinary wait. None keeps the existing behavior; capture spans fence ownership.
+    late_first_text_recovery_ms: int | None = Field(default=None, gt=0, le=30000)
     # Keep a held fast pass when the STT final only adds this many words at the end of the
     # text it started on; only the detector decides again (turn.py, "Kept on a longer final").
     # The final changed the words of 105 of 141 utterances in October's benchmark runs, and
@@ -119,6 +188,14 @@ class Settings(CoreSettings):
     # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
     fast_hedge_ms: int | None = 1200
     openai_fast_retry_tier: str | None = "priority"
+    # Supported deep models use Ultrafast. Explicit None preserves the provider default;
+    # retry tiers remain independent so capacity/access failures can fall back to Fast.
+    openai_fast_service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = (
+        None
+    )
+    openai_deep_service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = (
+        Field(default_factory=lambda data: fastest_deep_tier(data.get("openai_deep_model")))
+    )
     # The same for the deep pass. In the 2026-10-29 interviews 7 deep passes got no first token
     # within their timeout and retried on the same model and tier: their first words came at
     # 9.7 to 11 s instead of about 4 s (two more were lost in a runaway session). Its first
@@ -136,6 +213,24 @@ class Settings(CoreSettings):
         default_factory=lambda: dict(DEFAULT_PREPARED_THRESHOLDS)
     )
     prepared_answer_min_similarity: float = 0.85
+    # Defaults select the evaluated OpenAI-only system; explicit legacy remains rollback.
+    answer_architecture: Literal[
+        "legacy_dual", "adaptive", "adaptive_hybrid", "adaptive_on_demand"
+    ] = Field(default_factory=lambda data: "adaptive" if _openai_only(data) else "legacy_dual")
+    # Experimental: one independent expert attempt after a typed transient primary failure,
+    # only before any answer text. Off until paired failure-recovery evidence supports it.
+    adaptive_failure_recovery: bool = False
+    # Isolated adaptive expert route. Explicit None restores the global deep route;
+    # legacy and screens ignore this profile even when it remains configured.
+    adaptive_expert_route: Annotated[AdaptiveExpertRoute | None, NoDecode] = Field(
+        default_factory=_default_adaptive_expert
+    )
+    # Standard technical answers retain the dependent legacy detail that won full-view
+    # review. Expert/coding/design plans keep precedence; False restores pure adaptive.
+    adaptive_technical_legacy: bool = Field(default_factory=_openai_only)
+    adaptive_max_tokens: int = Field(default=1200, ge=100, le=4000)
+    adaptive_stream_idle_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    adaptive_stream_total_timeout_s: float = Field(default=90.0, gt=0, le=300)
     fast_pass_max_tokens: int = 250
     fast_pass_priority: bool = False
     deep_pass_max_tokens: int = 800
@@ -353,6 +448,12 @@ class Settings(CoreSettings):
     def prepared_threshold(self, model_id: str | None) -> PreparedThreshold:
         found = self.prepared_answer_thresholds.get(model_id or "")
         return found or PreparedThreshold(min_similarity=self.prepared_answer_min_similarity)
+
+    @field_validator("adaptive_expert_route", mode="before")
+    @classmethod
+    def _adaptive_expert_profile(cls, value: Any) -> Any:
+        # Keep an explicit environment JSON null distinct from an omitted field.
+        return json.loads(value) if isinstance(value, str) else value
 
     @field_validator("prepared_answer_thresholds", mode="after")
     @classmethod

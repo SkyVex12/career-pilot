@@ -17,7 +17,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 
 from copilot_core import keys
 from copilot_core.llm import Decided, LLMDone, LLMRequest
-from copilot_core.pricing import ModelPrice, cost_usd, model_key
+from copilot_core.pricing import ModelPrice, cost_usd, model_key, openai_cache_write_pricing
 
 UID = uuid5(NAMESPACE_URL, "sensei-benchmark/sergio")
 APP = uuid5(UID, "turncare")
@@ -44,7 +44,8 @@ class Budget:
     """Reserve before dispatch, including hedges; unknown usage keeps its reservation.
 
     UTF-8 byte count plus schema/transport allowance bounds text input tokens.
-    Unknown/cancelled calls are conservatively charged their entire reservation.
+    Unknown/cancelled calls retain their reservation for budget admission.
+    This bookkeeping total is neither billed spend nor a proved spending upper bound.
     One ledger is shared by preparation, replay and judging; run these sequentially.
     """
 
@@ -61,9 +62,15 @@ class Budget:
             if (directory / "budget-limit.json").exists()
             else 2.95
         )
-        self.entries: list[dict[str, Any]] = (
-            json.loads(self.path.read_text("utf-8")) if self.path.exists() else []
-        )
+        self.entries: list[dict[str, Any]] = self.load_entries()
+
+    def load_entries(self) -> list[dict[str, Any]]:
+        """Load the authoritative ledger; legacy runners retain their JSON array."""
+        return json.loads(self.path.read_text("utf-8")) if self.path.exists() else []
+
+    def checkpoint(self, ticket: int) -> None:
+        """Persist a changed ticket; specialized runners may use atomic individual records."""
+        save(self.path, self.entries)
 
     @property
     def total(self) -> float:
@@ -74,17 +81,46 @@ class Budget:
         if model_key(model) not in prices:
             raise ValueError("Model price missing; refusing billed call")
         tokens = len(json.dumps(payload, ensure_ascii=False, default=str).encode()) + 1024
+        write_bound = (
+            {
+                "cache_write_tokens": tokens,
+                "cache_write_30m_tokens": 0,
+                "cache_write_12h_tokens": tokens,
+            }
+            if openai_cache_write_pricing(model)
+            else {}
+        )
         value = cost_usd(
-            model, tier, tokens, 0, output, prices, self.settings.tier_price_multipliers
+            model,
+            tier,
+            tokens,
+            0,
+            output,
+            prices,
+            self.settings.tier_price_multipliers,
+            **write_bound,
         )
         if value is None:
             raise ValueError("Tier price missing; refusing billed call")
         upper = float(value) * (1.25 if model.startswith("claude") else 1.0)
         if self.total + upper > self.limit:
             raise ValueError("Benchmark budget exhausted before dispatch")
-        self.entries.append({"model": model, "charged_usd": upper, "status": "reserved"})
-        save(self.path, self.entries)
-        return len(self.entries) - 1
+        self.entries.append(
+            {
+                "model": model,
+                "charged_usd": upper,
+                "status": "reserved",
+                "pricing_version": "cache-writes-v1",
+                "reservation_input_tokens": tokens,
+                "reservation_output_tokens": output,
+                "reservation_assumption": "all input is 12h cache writes"
+                if write_bound
+                else "uncached input with existing provider allowance",
+            }
+        )
+        ticket = len(self.entries) - 1
+        self.checkpoint(ticket)
+        return ticket
 
     def finish(self, ticket: int, done: LLMDone) -> None:
         u = done.usage
@@ -96,13 +132,34 @@ class Budget:
             u.output_tokens,
             self.settings.model_prices,
             self.settings.tier_price_multipliers,
+            cache_write_tokens=u.cache_write_tokens,
+            cache_write_30m_tokens=u.cache_write_30m_tokens,
+            cache_write_12h_tokens=u.cache_write_12h_tokens,
         )
+        self.entries[ticket].update(usage=asdict(u), tier=done.service_tier)
         if value is None:
-            return
-        self.entries[ticket].update(
-            charged_usd=float(value), status="usage", usage=asdict(u), tier=done.service_tier
-        )
-        save(self.path, self.entries)
+            self.entries[ticket].update(status="usage_unpriced", pricing_missing=True)
+        else:
+            self.entries[ticket].update(
+                charged_usd=float(value), status="usage", pricing_missing=False
+            )
+        self.checkpoint(ticket)
+
+
+def budget_reporting(budget: Budget) -> dict[str, Any]:
+    """Label ledger bookkeeping without claiming a provider billing upper bound."""
+    priced = sum(e["charged_usd"] for e in budget.entries if e["status"] == "usage")
+    reserved = sum(
+        e["charged_usd"] for e in budget.entries if e["status"] in ("reserved", "usage_unpriced")
+    )
+    return {
+        "recorded_price_subtotal_usd": round(priced, 8),
+        "reservation_usd": round(reserved, 8),
+        "accounting_total_usd": round(budget.total, 8),
+        "cost_upper_usd": None,
+        "actual_billed_cost_usd": None,
+        "cost_basis": "recorded_usage_at_configured_rates_not_invoice",
+    }
 
 
 class MeteredProvider:
@@ -122,7 +179,7 @@ class MeteredProvider:
             self.budget.entries[ticket].update(
                 charged_usd=0.0, status="failed_before_submission", error_types=causes
             )
-            save(self.budget.path, self.budget.entries)
+            self.budget.checkpoint(ticket)
 
     async def warm(self, model: str) -> None:
         await self.inner.warm(model)
@@ -381,7 +438,7 @@ async def replay(directory: Path, turns: list[dict[str, Any]], *, speed: float =
                     "sent": len(sent),
                     "total": len(turns),
                     "elapsed_s": at,
-                    "cost_upper_usd": budget.total,
+                    **budget_reporting(budget),
                 },
             )
             save(directory / "replay.json", {"speed": speed, "sent": sent, "events": events})
@@ -398,7 +455,7 @@ async def replay(directory: Path, turns: list[dict[str, Any]], *, speed: float =
                 "events": events,
                 "metadata_logs": decoded,
                 "complete": True,
-                "cost_upper_usd": budget.total,
+                **budget_reporting(budget),
             },
         )
     await valkey.aclose()

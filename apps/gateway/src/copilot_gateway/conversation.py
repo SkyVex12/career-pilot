@@ -233,6 +233,7 @@ class Conversation:
         self.summary_calls = 0
         self._task: asyncio.Task[None] | None = None
         self._failed_at: float | None = None
+        self._closed = False
 
     # Building it.
 
@@ -393,7 +394,7 @@ class Conversation:
     # The rolling summary.
 
     def _maybe_fold(self) -> None:
-        if self.summarize is None or self._task is not None:
+        if self._closed or self.summarize is None or self._task is not None:
             return
         if self._failed_at is not None and time.monotonic() - self._failed_at < self.retry_s:
             return
@@ -421,6 +422,8 @@ class Conversation:
             log.warning("conversation summary failed: %s", e)
         finally:
             self._task = None
+        if self._closed:
+            return
         self.summary_calls += 1
         if not new or not new.strip():
             # The lines stay (the recent window trims what does not fit) and the next overflow
@@ -443,6 +446,7 @@ class Conversation:
             await asyncio.shield(self._task)
 
     def close(self) -> None:
+        self._closed = True
         if self._task is not None:
             self._task.cancel()
 

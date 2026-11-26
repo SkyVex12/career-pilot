@@ -331,7 +331,8 @@ async def test_sessions_list_detail_transcript_and_delete(api: Api) -> None:
     assert await api.svc.store.head(me_audio_key(uid, ready)) is None
 
 
-async def test_a_replay_is_what_the_overlay_showed(api: Api) -> None:
+@pytest.mark.parametrize("strategy", [None, "adaptive_on_demand"])
+async def test_a_replay_is_what_the_overlay_showed(api: Api, strategy: str | None) -> None:
     uid, h = api.user()
     await api.client.get("/v1/me", headers=h)
     sid = await seed_session(api, uid)
@@ -352,8 +353,9 @@ async def test_a_replay_is_what_the_overlay_showed(api: Api) -> None:
             await conn.execute(
                 "insert into app.answers (id, question_id, user_id, pass, model, tier, text_enc,"
                 " key_version, latency_ms, feedback) values ($1, $2, $3, $4, $5, 'standard',"
-                " $6, $7, '{}', 'up')",
+                " $6, $7, $8::jsonb, 'up')",
                 aid, kept, uid, pass_, model, enc, v,
+                json.dumps({"answer_strategy": strategy} if strategy else {}),
             )  # fmt: skip
     r = await api.client.get(f"/v1/sessions/{sid}/replay", headers=h)
     assert r.status_code == 200, r.text
@@ -365,6 +367,7 @@ async def test_a_replay_is_what_the_overlay_showed(api: Api) -> None:
     assert (q["id"], q["text"], q["type"], q["offset_ms"]) == (str(kept), "Why Globex?",
                                                                "behavioral", 1500)  # fmt: skip
     assert q["feedback"] == "up"
+    assert q.get("answer_strategy") == strategy
     assert (q["fast"]["text"], q["fast"]["source"]) == ("- Payments", "prepared")
     assert (q["deep"]["text"], q["deep"]["source"]) == ("Because.", "model")
     _, other = api.user()

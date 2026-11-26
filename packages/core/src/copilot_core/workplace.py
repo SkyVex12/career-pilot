@@ -38,7 +38,9 @@ from copilot_core import knowledge
 from copilot_core.db import Conn
 from copilot_core.ids import uuid7
 from copilot_core.packs import (
+    PREPARED_STANDUP_POLICY,
     CompanyDigest,
+    Digest,
     EmployerRef,
     NodeRef,
     PackItem,
@@ -324,7 +326,7 @@ def standup_answers(brief: StandupBrief) -> list[PreparedAnswer]:
     if brief.today:
         answers["today"] = _points(brief.today, POINTS_PER_SECTION)
     if brief.yesterday or brief.today:
-        blockers = _points(brief.blockers, 2) or ["Nothing blocking me right now"]
+        blockers = _points(brief.blockers, 2) or ["No blockers are recorded in the work log"]
         answers["blockers"] = blockers
         answers["update"] = (
             _points(brief.yesterday, 2) + _points(brief.today, 2) + _points(brief.blockers, 1)
@@ -334,6 +336,8 @@ def standup_answers(brief: StandupBrief) -> list[PreparedAnswer]:
             question=STANDUP_QUESTIONS[k],
             talking_points=v,
             node_ids=[i.node_id for i in _source(brief, k)],
+            grounding_policy=PREPARED_STANDUP_POLICY,
+            evidence_version=Digest.version_of(brief.model_dump_json()),
         )
         for k, v in answers.items()
     ]

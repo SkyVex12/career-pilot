@@ -12,6 +12,8 @@ export interface PassView {
   error: string | null; // answer.error code; "cancelled" keeps what arrived
   source: string | null;
   refs: MemoryRef[];
+  /** Chunk positions are per question/pass; old gateways omit them. */
+  stream?: { next: number; pending: Record<number, { text: string; end: number }>; expected?: number };
 }
 
 export interface QuestionView {
@@ -24,6 +26,7 @@ export interface QuestionView {
   fast: PassView;
   deep: PassView;
   deepRequested: boolean;
+  answerStrategy?: "legacy_dual" | "adaptive" | "adaptive_hybrid" | "adaptive_on_demand";
   /** A screenshot's question (coding mode), once the gateway has read the screen: its tasks. */
   screen?: ScreenReading;
 }
@@ -85,9 +88,13 @@ export interface SessionView {
   sessionId: string | null;
   connection: ConnectionState | null;
   stopped: StopReason | null;
+  /** Reject queued server events until the native transport announces a live connection. */
+  socketClosed: boolean;
   status: Record<string, { state: BadgeState; message: string }>;
   /** Every question of the session; none is ever removed. */
   questions: QuestionView[];
+  /** Cancellation can arrive before detection; keep its tombstone for this session. */
+  cancelledIds: Record<string, true>;
   /** Every transcript line of the session, both sides; none is removed (an echo line is). */
   transcript: TranscriptLine[];
   timeline: TimelineRef[];
@@ -120,8 +127,10 @@ export const initial: SessionView = {
   sessionId: null,
   connection: null,
   stopped: null,
+  socketClosed: false,
   status: {},
   questions: [],
+  cancelledIds: {},
   transcript: [],
   timeline: [],
   deepAuto: null,
@@ -150,7 +159,44 @@ export function deepStartsAlone(s: SessionView, type: QuestionType): boolean {
 }
 
 function updateQuestion(s: SessionView, id: string, f: (q: QuestionView) => QuestionView): SessionView {
-  return { ...s, questions: s.questions.map((q) => (q.id === id ? f(q) : q)) };
+  let changed = false;
+  const questions = s.questions.map(q => {
+    if (q.id !== id) return q;
+    const next = f(q);
+    changed ||= next !== q;
+    return next;
+  });
+  return changed ? { ...s, questions } : s;
+}
+
+function appendDelta(p: PassView, text: string, sequence?: number | null, sequenceEnd?: number | null): PassView {
+  const repairing = p.error === "incomplete_stream" && p.stream?.expected !== undefined;
+  if (p.done && !repairing) return p;
+  if (sequence == null) return p.done ? p : { ...p, text: p.text + text };
+  const stream = p.stream ?? { next: 0, pending: {} };
+  const end = sequenceEnd ?? sequence + 1;
+  if (!Number.isSafeInteger(sequence) || !Number.isSafeInteger(end) || sequence < 0 || end <= sequence) return p;
+  if (sequence < stream.next || stream.pending[sequence] || (stream.expected !== undefined && end > stream.expected)) return p;
+  // A malformed/lost stream must not consume unbounded memory or spin forever.
+  if (sequence - stream.next > 128 || Object.keys(stream.pending).length >= 128) return { ...p, done: true, error: "stream_order", stream: undefined };
+  const pending = { ...stream.pending, [sequence]: { text, end } };
+  let next = stream.next;
+  let content = p.text;
+  while (pending[next]) {
+    const chunk = pending[next];
+    delete pending[next];
+    content += chunk.text;
+    next = chunk.end;
+  }
+  for (const key of Object.keys(pending)) if (Number(key) < next) delete pending[Number(key)];
+  const incomplete = stream.expected !== undefined && next < stream.expected;
+  return { ...p, text: content, stream: { ...stream, next, pending }, ...(repairing ? { error: incomplete ? "incomplete_stream" : null } : {}) };
+}
+
+function automaticExpert(s: SessionView, type: QuestionType, strategy: QuestionView["answerStrategy"]): boolean {
+  // Candidate routing uses more than question type. Only legacy predicts a queued pass;
+  // candidate experts become available when their own stream arrives or the user asks.
+  return (!strategy || strategy === "legacy_dual") && deepStartsAlone(s, type);
 }
 
 function log(s: SessionView, line: string): SessionView {
@@ -158,9 +204,26 @@ function log(s: SessionView, line: string): SessionView {
   return { ...s, log: [...s.log.slice(-199), `${stamp} ${line}`] };
 }
 
+function stopAnswers(s: SessionView, reason: StopReason): SessionView {
+  const finish = (p: PassView): PassView => p.done
+    ? { ...p, stream: undefined }
+    : { ...p, done: true, error: "cancelled", stream: undefined };
+  return {
+    ...s, running: false, stopped: reason, socketClosed: true, speaking: { them: false, me: false },
+    questions: s.questions.map(q => {
+      const idleExpert = !q.deepRequested && !q.deep.text && !q.deep.stream && !q.deep.done && q.deep.error === null;
+      return { ...q, fast: finish(q.fast), deep: idleExpert ? q.deep : finish(q.deep) };
+    }),
+  };
+}
+
+function terminalSession(s: SessionView): boolean {
+  return s.stopped !== null || s.connection?.state === "stopped";
+}
+
 export function reduce(s: SessionView, a: Action): SessionView {
   if (a.type === "reset") return { ...initial, running: a.running };
-  if (a.type === "deep_requested") return updateQuestion(s, a.id, (q) => ({ ...q, deepRequested: true }));
+  if (a.type === "deep_requested") return terminalSession(s) ? s : updateQuestion(s, a.id, (q) => q.deepRequested ? q : ({ ...q, deepRequested: true }));
   if (a.type === "note_sent") return { ...s, sentNotes: [...s.sentNotes.slice(-49), { id: a.id, text: a.text, result: null }] };
   if (a.type === "note_asked") return { ...s, notes: s.notes.map((n) => (n.id === a.id ? { ...n, asked: true } : n)) };
   const e = a.event;
@@ -168,26 +231,34 @@ export function reduce(s: SessionView, a: Action): SessionView {
     case "context_reset":
       return { ...initial };
     case "connection": {
-      const next = { ...s, connection: e.state, running: e.state.state !== "stopped" };
+      if (terminalSession(s) && e.state.state !== "stopped") return s;
+      if (e.state.state === "stopped") {
+        // End streaming immediately; the separate native stopped event makes the
+        // saved session ready for review. Keep that ordering for the call workspace.
+        return { ...stopAnswers(s, e.state.reason), stopped: s.stopped, connection: e.state };
+      }
+      const next = { ...s, connection: e.state, running: true };
       if (e.state.state === "live") {
-        return log({ ...next, stopped: null, sessionId: e.state.session_id }, `live ${e.state.resumed ? "(resumed)" : "(new session)"} ${e.state.session_id}`);
+        return log({ ...next, stopped: null, socketClosed: false, sessionId: e.state.session_id }, `live ${e.state.resumed ? "(resumed)" : "(new session)"} ${e.state.session_id}`);
       }
       if (e.state.state === "reconnecting") return log(next, `reconnecting in ${e.state.in_ms} ms (attempt ${e.state.attempt + 1})`);
       return next;
     }
     case "stopped":
-      return log({ ...s, stopped: e.reason, running: false }, `stopped: ${e.reason}`);
+      return log(stopAnswers(s, e.reason), `stopped: ${e.reason}`);
     case "closed":
-      return log(s, `socket closed ${e.code ?? "(no close frame)"} ${e.reason}`);
+      return log({ ...s, socketClosed: true }, `socket closed ${e.code ?? "(no close frame)"} ${e.reason}`);
     case "warning":
       return log(s, `warning: ${e.message}`);
     case "vad":
+      if (terminalSession(s)) return s;
       return { ...s, speaking: { ...s.speaking, [e.channel]: e.speaking } };
     case "latency":
       return { ...s, latency: { ...s.latency, [e.question.question_id]: e.question } };
     case "server":
       break;
   }
+  if (s.socketClosed || s.stopped !== null) return s;
   const m = e.message;
   switch (m.type) {
     case "status":
@@ -208,20 +279,22 @@ export function reduce(s: SessionView, a: Action): SessionView {
           ? { key, channel: m.channel, text: m.text, final: true, startMs: m.start_ms, endMs: m.end_ms }
           : { key, channel: m.channel, text: m.text, final: false };
       const i = s.transcript.findIndex((t) => t.key === key);
+      if (i >= 0 && s.transcript[i].final && !line.final) return s;
       if (i >= 0) return { ...s, transcript: s.transcript.map((t, j) => (j === i ? line : t)) };
       return { ...s, transcript: [...s.transcript, line], timeline: [...s.timeline, { kind: "line", key }] };
     }
     case "question.detected": {
+      if (s.cancelledIds[m.question_id]) return s;
       const exists = s.questions.some((q) => q.id === m.question_id);
       if (exists) {
-        return updateQuestion(s, m.question_id, (q) => ({
+        return updateQuestion(s, m.question_id, (q) => q.cancelled || (!q.speculative && m.speculative) ? q : ({
           ...q,
           text: m.text,
           type: m.question_type,
           confidence: m.confidence,
           speculative: m.speculative,
-          cancelled: false,
-          deepRequested: q.deepRequested || deepStartsAlone(s, m.question_type),
+          answerStrategy: m.answer_strategy ?? q.answerStrategy,
+          deepRequested: q.deepRequested || automaticExpert(s, m.question_type, m.answer_strategy ?? q.answerStrategy),
           ...(m.screen ? { screen: m.screen } : {}),
         }));
       }
@@ -234,22 +307,30 @@ export function reduce(s: SessionView, a: Action): SessionView {
         cancelled: false,
         fast: emptyPass(),
         deep: emptyPass(),
-        deepRequested: deepStartsAlone(s, m.question_type),
+        answerStrategy: m.answer_strategy ?? "legacy_dual",
+        deepRequested: automaticExpert(s, m.question_type, m.answer_strategy),
         ...(m.screen ? { screen: m.screen } : {}),
       };
       return { ...s, questions: [...s.questions, q], timeline: [...s.timeline, { kind: "question", id: q.id }] };
     }
     case "question.cancelled":
-      return updateQuestion(s, m.question_id, (q) => ({ ...q, cancelled: true }));
+      if (s.cancelledIds[m.question_id]) return s;
+      return updateQuestion({ ...s, cancelledIds: { ...s.cancelledIds, [m.question_id]: true } }, m.question_id, (q) => ({ ...q, cancelled: true }));
     case "answer.delta":
-      return updateQuestion(s, m.question_id, (q) => ({ ...q, [m.pass]: { ...q[m.pass], text: q[m.pass].text + m.text } }));
+      return updateQuestion(s, m.question_id, (q) => {
+        if (q.cancelled) return q;
+        const pass = appendDelta(q[m.pass], m.text, m.sequence, m.sequence_end);
+        return pass === q[m.pass] ? q : { ...q, [m.pass]: pass };
+      });
     case "answer.done":
-      return updateQuestion(s, m.question_id, (q) => ({
-        ...q,
-        [m.pass]: { ...q[m.pass], done: true, refs: m.memory_refs, source: m.source ?? null },
-      }));
+      return updateQuestion(s, m.question_id, (q) => {
+        const p = q[m.pass];
+        if (q.cancelled || p.done) return q;
+        const stream = m.delta_count == null ? p.stream : { ...(p.stream ?? { next: 0, pending: {} }), expected: m.delta_count };
+        return { ...q, [m.pass]: { ...p, done: true, refs: m.memory_refs, source: m.source ?? null, stream, error: stream?.expected !== undefined && stream.next < stream.expected ? "incomplete_stream" : null } };
+      });
     case "answer.error":
-      return updateQuestion(s, m.question_id, (q) => ({ ...q, [m.pass]: { ...q[m.pass], done: true, error: m.code } }));
+      return updateQuestion(s, m.question_id, (q) => q.cancelled || (q[m.pass].done && !(m.code === "cancelled" && q[m.pass].error === "incomplete_stream")) ? q : ({ ...q, [m.pass]: { ...q[m.pass], done: true, error: m.code, stream: undefined } }));
     case "error":
       return log(s, `gateway error ${m.code}${m.fatal ? " (fatal)" : ""}: ${m.message}`);
     case "session.ready":
@@ -344,6 +425,7 @@ export function fromReplay(r: Replay): SessionView {
     fast: passOf(q.fast, true),
     deep: passOf(q.deep, false),
     deepRequested: Boolean(q.deep),
+    answerStrategy: q.answer_strategy ?? "legacy_dual",
   }));
   const timed: { at: number; order: number; ref: TimelineRef }[] = [
     ...r.segments
@@ -355,15 +437,49 @@ export function fromReplay(r: Replay): SessionView {
   return { ...initial, sessionId: r.session_id, transcript, questions, timeline: timed.map((t) => t.ref) };
 }
 
-/// Apply the core's snapshot, then live events from its `next` number on. A live event numbered
-/// 0 after others means a new session started in this run: its numbering starts over.
+/// Apply the core's compacted snapshot, then live events. Native epochs distinguish a
+/// new session from a duplicate event numbered zero; older cores use session identity.
 export function snapshotApplier(dispatch: (a: Action) => void) {
-  let next = -1; // -1 until the snapshot is in
+  let next = -1;
+  let epoch: number | undefined;
+  let sessionId: string | null = null;
+  const retired = new Set<string>();
   const early: Numbered[] = [];
+  const identity = (e: UiEvent): string | null => {
+    if (e.kind === "connection" && e.state.state === "live") return e.state.session_id;
+    if (e.kind === "server" && (e.message.type === "session.ready" || e.message.type === "seat.ready")) return e.message.session_id;
+    return null;
+  };
   const apply = (e: Numbered) => {
-    if (e.n === 0 && next > 0) {
+    const id = identity(e.event);
+    if (e.epoch !== undefined) {
+      if (epoch !== undefined && e.epoch < epoch) return;
+      if (epoch !== undefined && e.epoch > epoch) {
+        dispatch({ type: "reset", running: true });
+        sessionId = null;
+        next = 0;
+      }
+      epoch = e.epoch;
+    } else if (epoch !== undefined) {
+      // Never let an older core's queued, untagged event cross a tagged boundary.
+      return;
+    } else if (id && sessionId && id !== sessionId) {
+      if (retired.has(id)) return;
+      retired.add(sessionId);
       dispatch({ type: "reset", running: true });
+      sessionId = null;
       next = 0;
+    }
+    if (id) sessionId = id;
+    if (e.n < next && e.event.kind === "server") {
+      const m = e.event.message;
+      // Per-pass positions let a reordered chunk repair a gap after a newer event.
+      // Cancellation is terminal even when it arrives before detection or completion.
+      if ((m.type === "answer.delta" && m.sequence != null) || (m.type === "answer.done" && m.delta_count != null)
+          || m.type === "question.cancelled" || (m.type === "answer.error" && m.code === "cancelled")) {
+        dispatch({ type: "event", event: e.event });
+      }
+      return;
     }
     if (e.n < next) return;
     dispatch({ type: "event", event: e.event });
@@ -374,12 +490,17 @@ export function snapshotApplier(dispatch: (a: Action) => void) {
       if (next < 0) early.push(e);
       else apply(e);
     },
-    snapshot(events: Numbered[], running: boolean, nextN?: number) {
+    snapshot(events: Numbered[], running: boolean, nextN?: number, epochN?: number) {
       dispatch({ type: "reset", running });
-      // Compacted entries keep their first place but may hold later events, so their own
-      // numbers are not in order: apply them all, then count from the core's `next`.
-      for (const e of events) dispatch({ type: "event", event: e.event });
-      next = nextN ?? (events.length ? Math.max(...events.map((e) => e.n)) + 1 : 0);
+      epoch = epochN ?? events.find(e => e.epoch !== undefined)?.epoch;
+      sessionId = null;
+      retired.clear();
+      // Compacted entries retain their original place, but their n may be newer.
+      for (const e of events) {
+        dispatch({ type: "event", event: e.event });
+        sessionId = identity(e.event) ?? sessionId;
+      }
+      next = nextN ?? (events.length ? Math.max(...events.map(e => e.n)) + 1 : 0);
       for (const e of early) apply(e);
       early.length = 0;
     },
@@ -397,8 +518,8 @@ export function useSession(): [SessionView, (a: Action) => void] {
       if (disposed) u();
       else unlisten = u;
     });
-    api.snapshot().then(([events, running, next]) => {
-      if (!disposed) applier.snapshot(events, running, next);
+    api.snapshot().then(([events, running, next, epoch]) => {
+      if (!disposed) applier.snapshot(events, running, next, epoch);
     });
     return () => {
       disposed = true;
@@ -411,6 +532,8 @@ export function useSession(): [SessionView, (a: Action) => void] {
 /// Why a call stopped, in words.
 export const STOPPED: Record<StopReason, string> = {
   ended: "Call ended",
+  retention_failed: "Call stopped; saving failed",
+  end_unconfirmed: "Call stopped; saving not confirmed",
   no_minutes: "No minutes left",
   session_active: "Another call is active",
   replaced: "Continued in another app",
@@ -420,6 +543,13 @@ export const STOPPED: Record<StopReason, string> = {
   seat_closed: "This seat is closed",
   left: "You left the call",
 };
+
+/** A stopped call may have saved only part of its history; do not imply data was lost. */
+export function stopMessage(reason: StopReason): string | undefined {
+  if (reason === "retention_failed") return "The gateway could not save all call data. Check History for what is available.";
+  if (reason === "end_unconfirmed") return "The connection closed before the gateway confirmed completion. Check History for what is available.";
+  return undefined;
+}
 
 /** The call whose post-call screen to show, if any: one of this app's own calls that ended.
  * A guest never gets one: the call was someone else's, and it may still be going on. */

@@ -27,8 +27,45 @@ pub const SAMPLE_RATE: u32 = 16_000;
 /// One tick: 10 ms, the unit WebRTC audio processing works in.
 pub const TICK_SAMPLES: usize = 160;
 pub const TICK_MS: u32 = 10;
-/// A regular speech frame on the wire: 100 ms.
+/// The baseline regular speech frame on the wire: 100 ms.
 pub const FRAME_SAMPLES: usize = 1_600;
+
+/// Supported regular speech-frame durations. Live capture defaults to 40 ms; changing this
+/// only changes packet boundaries, not VAD decisions, pre-roll or the immediate end flush.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FrameDuration {
+    Ms20,
+    #[default]
+    Ms40,
+    Ms100,
+}
+
+impl FrameDuration {
+    pub const fn millis(self) -> u32 {
+        match self {
+            Self::Ms20 => 20,
+            Self::Ms40 => 40,
+            Self::Ms100 => 100,
+        }
+    }
+
+    pub const fn samples(self) -> usize {
+        self.millis() as usize * SAMPLE_RATE as usize / 1000
+    }
+}
+
+impl TryFrom<u32> for FrameDuration {
+    type Error = &'static str;
+
+    fn try_from(ms: u32) -> Result<Self, Self::Error> {
+        match ms {
+            20 => Ok(Self::Ms20),
+            40 => Ok(Self::Ms40),
+            100 => Ok(Self::Ms100),
+            _ => Err("audio frame duration must be 20, 40 or 100 ms"),
+        }
+    }
+}
 
 pub fn samples_to_ms(samples: u64) -> u32 {
     u32::try_from(samples * 1000 / u64::from(SAMPLE_RATE)).unwrap_or(u32::MAX)

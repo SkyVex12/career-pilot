@@ -471,14 +471,26 @@ class _Turn:
     deciding while the next utterance starts (see `TurnDetector.on_speech_start`)."""
 
     t0: float
+    capture_start_ms: int | None = None
+    capture_end_ms: int | None = None
+    no_text_exit: bool = False
+    late_recovery_pending: bool = False
+    late_recovery_used: bool = False
+    late_text_at: float | None = None
+    late_partial: bool = False
+    late_partial_end_ms: int | None = None
+    late_text_changed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed_at: float | None = None  # when the STT final after this speech end arrived
+    committed: asyncio.Event = field(default_factory=asyncio.Event)
+    committed_text: str | None = None  # segment-final text; not an utterance flush
     text: str | None = None  # frozen when the turn is detached from the live text
     held_qid: UUID | None = None  # a held fast pass not released yet
     speculative_qid: UUID | None = None  # a question shown speculatively, not confirmed yet
     cand: _Candidate | None = None  # the text being decided, with its detector call
     taken: bool = False  # a forced question took the held pass and the detector call over
     early: "_Early | None" = None  # step 1 started on this text before the speech end
+    early_text: str | None = None  # candidate adopted from before this speech end
     first_qid: UUID | None = None  # shown before the detector decided (plain_question)
 
 
@@ -489,6 +501,10 @@ class _Early:
     cand: _Candidate
     held: UUID | None
     at: float
+
+
+class _LateRecoveryExpired(Exception):
+    """The opted-in late transcript did not settle within its original recovery horizon."""
 
 
 class TurnDetector:
@@ -508,7 +524,12 @@ class TurnDetector:
         carry_gap_ms: int = 0,
         first_show_min_words: int | None = None,
         keep_added_words: int | None = None,
+        strict_extensions: bool = False,
         early_all_modes: bool = False,
+        early_stable_partial_ms: int | None = None,
+        early_final_release: bool = False,
+        committed_final_recheck: bool = False,
+        late_first_text_recovery_ms: int | None = None,
         spoken_language: str = "en",
     ) -> None:
         self.host = host
@@ -539,8 +560,23 @@ class TurnDetector:
         # prepared match restart on the new text (module doc, "Kept on a longer final").
         # None: every change restarts the pass too.
         self.keep_added_words = keep_added_words
+        self.strict_extensions = strict_extensions
         # Early decision in every call, not only group calls.
         self.early_all_modes = early_all_modes
+        self.early_stable_s = (
+            early_stable_partial_ms / 1000 if early_stable_partial_ms is not None else None
+        )
+        self.early_final_release = early_final_release
+        self.committed_final_recheck = committed_final_recheck
+        # Only an empty first-text timeout can opt into this separate recovery window.
+        # It never extends the ordinary turn's wait or changes its latency anchor.
+        self.late_first_text_recovery_s = (
+            late_first_text_recovery_ms / 1000 if late_first_text_recovery_ms is not None else None
+        )
+        self._capture_start_ms: int | None = None
+        self._retired_empty_end_ms: int | None = None
+        self._stable_timer: asyncio.TimerHandle | None = None
+        self._stable_text: str | None = None
         self.speaking = False
         self.early: _Early | None = None
         self.early_at = 0.0
@@ -560,33 +596,172 @@ class TurnDetector:
         self.detached_turns = 0
         self.early_starts = 0
         self.early_used = 0
+        self.stable_early_starts = 0
+        self.early_final_releases = 0
         self.carried = 0
         self.first_shown = 0
         self.first_withdrawn = 0
         self.held_kept = 0
         self.recovered = 0
+        self.late_first_text_recoveries = 0
 
     def utterance(self) -> str:
         return " ".join([*self.finals, self.interim]).strip()
 
     def reset(self) -> None:
+        self._cancel_stable()
         self.finals.clear()
         self.interim = ""
 
     def on_result(self, r: TimedResult) -> None:
+        turn = self.turn
+        recovering = turn is not None and turn.late_recovery_pending
+        owns_recovery_text = turn is not None and (
+            recovering or (turn.late_recovery_used and self.task is not None)
+        )
+        if self.late_first_text_recovery_s is not None:
+            # A delayed result spanning a retired empty turn cannot safely seed a new one.
+            if self._retired_empty_end_ms is not None and r.start_ms < self._retired_empty_end_ms:
+                return
+            if owns_recovery_text and turn is not None and not self._owns_late_result(turn, r):
+                return
+        if recovering and turn is not None and not turn.late_recovery_used and r.text:
+            # An empty flush received before any text is not completion of this transcript.
+            turn.flushed.clear()
+            turn.flushed_at = None
         if r.is_final:
             if r.text:
                 self.finals.append(r.text)
-            self.interim = ""
-        else:
+            if r.text or not owns_recovery_text:
+                self.interim = ""
+        elif r.text or not owns_recovery_text:
             self.interim = r.text
+        if owns_recovery_text and turn is not None:
+            if r.text:
+                turn.late_text_at = time.monotonic()
+                if not r.is_final:
+                    turn.late_partial = True
+                    turn.late_partial_end_ms = max(turn.late_partial_end_ms or 0, r.end_ms)
+                elif turn.late_partial_end_ms is None or r.end_ms >= turn.late_partial_end_ms:
+                    turn.late_partial = False
+                    turn.late_partial_end_ms = None
+                # A segment-final covering only a prefix cannot resolve the observed tail.
+            if r.text or r.flushed:
+                turn.late_text_changed.set()
         if r.text:
             self.text_arrived.set()
+        if (
+            self.committed_final_recheck
+            and r.is_final
+            and r.text
+            and not self.speaking
+            and self.turn is not None
+            and self.turn.text is None
+            and self.task is not None
+            and not self.task.done()
+        ):
+            # A segment-final can commit full words well before the empty from_finalize
+            # acknowledgement. Reconcile those words without declaring the turn complete.
+            self.turn.committed_text = self.utterance()
+            self.turn.committed.set()
         if r.flushed and self.turn is not None:
             self.turn.flushed_at = time.monotonic()
             self.turn.flushed.set()
+        if recovering and turn is not None and r.text and not turn.late_recovery_used:
+            turn.late_recovery_used = True
+            self.late_first_text_recoveries += 1
+            self.task = asyncio.create_task(self._recover_late_text(turn))
         if self.speaking and r.text:
             self._maybe_early()
+
+    def _owns_late_result(self, turn: _Turn, r: TimedResult) -> bool:
+        horizon = self.late_first_text_recovery_s
+        if (
+            horizon is None
+            or self.turn is not turn
+            or self.speaking
+            or turn.text is not None
+            or turn.taken
+            or self.task is None
+            or (not turn.late_recovery_used and not self.task.done())
+            or time.monotonic() > turn.t0 + horizon
+        ):
+            return False
+        start, end = turn.capture_start_ms, turn.capture_end_ms
+        # TimedResult uses the original audio capture clock, including replay on reconnect.
+        return (
+            start is not None
+            and end is not None
+            and 0 <= start < end
+            and 0 <= r.start_ms <= r.end_ms
+            and (not r.text or r.start_ms < r.end_ms)
+            and r.start_ms >= start
+            and (r.start_ms < end or (not r.text and r.flushed and r.start_ms == end))
+            and r.end_ms <= end
+        )
+
+    def _retire_empty(self, turn: _Turn | None) -> None:
+        if turn is None or not turn.no_text_exit:
+            return
+        turn.late_recovery_pending = False
+        if turn.capture_end_ms is not None:
+            self._retired_empty_end_ms = max(self._retired_empty_end_ms or 0, turn.capture_end_ms)
+
+    async def _late_text_quiet(self, turn: _Turn) -> bool:
+        """Finite quiet heuristic, not proof that STT processed every captured sample.
+
+        Only recovery of an empty first-text timeout uses this extra reconciliation.
+        A fresh flush plus final_wait_s without nonempty text is required, with no
+        unresolved partial. The original recovery horizon and latency anchor stay fixed.
+        """
+        horizon = self.late_first_text_recovery_s
+        assert horizon is not None
+        deadline = turn.t0 + horizon
+        while True:
+            turn.late_text_changed.clear()
+            now = time.monotonic()
+            if (
+                now > deadline
+                or turn.taken
+                or (turn.text is None and (self.turn is not turn or self.speaking))
+            ):
+                return False
+            settled_at = (turn.late_text_at or now) + self.final_wait_s
+            ready = (
+                turn.flushed.is_set()
+                and not turn.late_partial
+                and bool(self._text(turn))
+                and turn.late_text_at is not None
+            )
+            if ready and now >= settled_at:
+                return True
+            wake_at = min(deadline, settled_at) if ready else deadline
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(turn.late_text_changed.wait(), max(0.0, wake_at - now))
+
+    async def _require_late_quiet(self, turn: _Turn) -> None:
+        if turn.late_recovery_used and not await self._late_text_quiet(turn):
+            raise _LateRecoveryExpired
+
+    async def _recover_late_text(self, turn: _Turn) -> None:
+        try:
+            if await self._late_text_quiet(turn):
+                turn.late_recovery_pending = False
+                horizon = self.late_first_text_recovery_s
+                assert horizon is not None
+                timeout = asyncio.timeout_at(turn.t0 + horizon)
+                try:
+                    async with timeout:
+                        await self._turn(turn)
+                except TimeoutError:
+                    if not timeout.expired():
+                        raise
+                    if self.turn is turn and turn.text is None and not self.speaking:
+                        self.reset()
+        finally:
+            if turn.late_recovery_pending and self.turn is turn and not self.speaking:
+                self.reset()
+            self._retire_empty(turn)
 
     def _maybe_early(self) -> None:
         """Start step 1 on the live text when it ends a sentence (the module doc)."""
@@ -598,12 +773,51 @@ class TurnDetector:
             or text[-1] not in ".?!\u3002\uff1f\uff01\u061f"
             or speech_units(text, self.spoken_language) < self.hold_min_words
         ):
+            self._schedule_stable(text)
             return
+        self._cancel_stable()
+        self._start_early(text)
+
+    def _cancel_stable(self) -> None:
+        if self._stable_timer is not None:
+            self._stable_timer.cancel()
+        self._stable_timer = None
+        self._stable_text = None
+
+    def _schedule_stable(self, text: str) -> None:
+        # Hidden work only: the detector, final reconciliation and cancellation still
+        # decide whether anything may be shown. Repeated identical interims keep the timer.
+        if self.early_stable_s is None or not likely_question(
+            text, max(6, self.hold_min_words), self.spoken_language
+        ):
+            self._cancel_stable()
+            return
+        if text == self._stable_text and self._stable_timer is not None:
+            return
+        self._cancel_stable()
+        self._stable_text = text
+        delay = max(
+            self.early_stable_s,
+            self.early_at + (self.early_s or 0) - time.monotonic(),
+        )
+        self._stable_timer = asyncio.get_running_loop().call_later(
+            delay, self._on_stable_partial, text
+        )
+
+    def _on_stable_partial(self, text: str) -> None:
+        self._stable_timer = None
+        self._stable_text = None
+        if self.speaking and self.utterance() == text and self._start_early(text):
+            self.stable_early_starts += 1
+
+    def _start_early(self, text: str) -> bool:
+        if self.early_s is None:
+            return False
         if self.early is not None and not materially_changed(self.early.cand.text, text):
-            return
+            return False
         now = time.monotonic()
         if now - self.early_at < self.early_s:
-            return
+            return False
         self._drop_early()
 
         self.early_at = now
@@ -616,6 +830,7 @@ class TurnDetector:
             self.held_starts += 1
             held = self.host.start_held(text, now, match)
         self.early = _Early(_Candidate(text, detection, match), held, now)
+        return True
 
     async def change_language(self, language: str) -> None:
         """Finish cancellation before a new recognition generation can deliver text."""
@@ -647,15 +862,19 @@ class TurnDetector:
             self.held_discarded += 1
             self.host.discard_question(early.held)
 
-    def on_speech_start(self) -> None:
+    def on_speech_start(self, *, capture_ms: int | None = None) -> None:
+        self._cancel_stable()
         self.speaking = True
         if self.carry_until is not None and time.monotonic() > self.carry_until:
             self.drop_carry()  # the speaker took too long: that sentence stays unfinished
         self._interrupt()
+        self._capture_start_ms = capture_ms
 
     def drop_carry(self) -> None:
         """Forget the words of a turn left unfinished: the pause was too long, or the user
         spoke in between."""
+        if self.turn is not None and self.turn.late_recovery_pending:
+            self._interrupt()  # User speech retires an unanswered empty turn as well.
         if self.carry_until is None:
             return
         self.carry_until = None
@@ -665,8 +884,19 @@ class TurnDetector:
 
     def _interrupt(self) -> None:
         task, turn = self.task, self.turn
+        pending_recovery = turn is not None and turn.late_recovery_pending
+        self._retire_empty(turn)
         self.task = None
+        if pending_recovery:
+            self.reset()
+            if task is not None and not task.done():
+                task.cancel()
+            return
         if task is None or task.done():
+            return
+        if turn is not None and turn.late_recovery_used and turn.late_partial:
+            self.reset()
+            task.cancel()  # A recovered unresolved fragment cannot become a detached answer.
             return
         if (
             turn is not None
@@ -685,15 +915,25 @@ class TurnDetector:
             return
         task.cancel()  # step 3; the task sends question.cancelled if needed
 
-    def on_speech_end(self) -> None:
+    def on_speech_end(self, *, capture_ms: int | None = None) -> None:
+        self._cancel_stable()
         self._interrupt()
         self.speaking = False
         self.text_arrived.clear()
-        self.turn = _Turn(time.monotonic(), early=self.early)
+        self.turn = _Turn(
+            time.monotonic(),
+            capture_start_ms=self._capture_start_ms,
+            capture_end_ms=capture_ms,
+            early=self.early,
+        )
         self.early = None
         self.task = asyncio.create_task(self._turn(self.turn))
 
     def cancel(self) -> None:
+        self._cancel_stable()
+        if self.turn is not None and self.turn.late_recovery_pending:
+            self.reset()
+        self._retire_empty(self.turn)
         for task in (self.task, *self._detached):
             if task is not None and not task.done():
                 task.cancel()
@@ -759,11 +999,55 @@ class TurnDetector:
     async def _wait_final(self, turn: _Turn, deadline: float) -> None:
         if turn.flushed.is_set():
             return
+        if self.committed_final_recheck:
+            while not turn.flushed.is_set():
+                if turn.cand is not None and self._changed(turn, turn.cand):
+                    return  # The caller reconciles instead of confirming stale text.
+                turn.committed.clear()
+                if not await self._wait_revision(turn, deadline):
+                    return
+            return
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(turn.flushed.wait(), max(0.0, deadline - time.monotonic()))
 
+    async def _wait_revision(self, turn: _Turn, deadline: float | None = None) -> bool:
+        final = asyncio.create_task(turn.flushed.wait())
+        committed = asyncio.create_task(turn.committed.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {final, committed},
+                timeout=max(0.0, deadline - time.monotonic()) if deadline is not None else None,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return bool(done)
+        finally:
+            final.cancel()
+            committed.cancel()
+            await asyncio.gather(final, committed, return_exceptions=True)
+
+    async def _wait_release(self, turn: _Turn) -> None:
+        deadline = turn.t0 + self.speculative_s
+        if (
+            self.early_final_release
+            and turn.early_text is not None
+            and turn.held_qid is not None
+            and turn.cand is not None
+            and turn.cand.detection.done()
+            and turn.cand.detection.result().fires()
+            and not turn.cand.detection.result().error
+        ):
+            await self._wait_final(turn, deadline)
+            if turn.flushed.is_set() and _words(turn.early_text) == _words(self._text(turn)):
+                if time.monotonic() < deadline:
+                    self.early_final_releases += 1
+                return
+        await self._sleep_until(deadline)
+
     async def _turn_end(self, turn: _Turn) -> None:
         """Step 4's condition: the silence timer (or the turn model), then the STT final."""
+        if turn.late_recovery_used:
+            await self._require_late_quiet(turn)
+            return  # Its original silence timer already expired before recovery started.
         timer = asyncio.create_task(self._sleep_until(turn.t0 + self.silence_s))
         model = asyncio.create_task(self.turn_model.turn_complete(self._text(turn)))
         try:
@@ -787,6 +1071,12 @@ class TurnDetector:
         if turn.text is not None or recoverable_question(self._text(turn)) is None:
             return detection
         await self._turn_end(turn)
+        if (
+            self.committed_final_recheck
+            and turn.cand is not None
+            and self._changed(turn, turn.cand)
+        ):
+            return detection
         if detection.decision == "wait":
             await self._sleep_until(turn.t0 + max(self.silence_s, 1.0))
         qtype = recoverable_question(self._text(turn))
@@ -859,7 +1149,15 @@ class TurnDetector:
         if n is None:
             return False
         before, after = _words(checked), _words(text)
-        return bool(before) and after[: len(before)] == before and len(after) - len(before) <= n
+        added = after[len(before) :]
+        if self.strict_extensions and any(
+            word not in {"please", "thanks", "um", "uh"} for word in added
+        ):
+            # Even one word can name a different system; "not" and "without X" can
+            # reverse the answer. Candidate streams retain only punctuation/filler
+            # extensions, never substantive words the generation has not seen.
+            return False
+        return bool(before) and after[: len(before)] == before and len(added) <= n
 
     def _redetect(self, turn: _Turn, text: str, match: "asyncio.Task[object] | None") -> _Candidate:
         """The detector on the longer text; the held pass and its prepared match stay."""
@@ -882,11 +1180,22 @@ class TurnDetector:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self.text_arrived.wait(), max(0.0, deadline - time.monotonic()))
 
+    def _revision_text(self, turn: _Turn) -> str:
+        if turn.flushed.is_set():
+            return self._text(turn)
+        if self.committed_final_recheck:
+            return turn.committed_text or ""
+        return ""
+
     def _changed(self, turn: _Turn, cand: _Candidate) -> bool:
-        """The STT final has arrived and its text needs a decision of its own."""
-        if not turn.flushed.is_set():
-            return False
-        final = self._text(turn)
+        """Committed words (or an utterance flush) need a decision of their own."""
+        final = self._revision_text(turn)
+        if self.committed_final_recheck and not turn.flushed.is_set():
+            committed, candidate = _words(final), _words(cand.text)
+            if len(committed) < len(candidate) and candidate[: len(committed)] == committed:
+                # A segment-final may cover only the beginning of an existing interim.
+                # Do not truncate its uncommitted tail before the utterance flush.
+                return False
         return bool(final) and materially_changed(cand.text, final)
 
     async def _decide(self, turn: _Turn, cand: _Candidate) -> tuple[_Candidate, Detection]:
@@ -895,7 +1204,22 @@ class TurnDetector:
         the interim); a final that does not keeps the interim's decision."""
         deadline = turn.t0 + self.silence_s + self.final_wait_s
         while True:
-            if not cand.detection.done() and not turn.flushed.is_set():
+            await self._require_late_quiet(turn)
+            if self.committed_final_recheck:
+                if not self._changed(turn, cand) and not cand.detection.done():
+                    turn.committed.clear()
+                    if turn.flushed.is_set():
+                        await asyncio.wait({cand.detection})
+                    else:
+                        revision = asyncio.create_task(self._wait_revision(turn))
+                        try:
+                            await asyncio.wait(
+                                {cand.detection, revision}, return_when=asyncio.FIRST_COMPLETED
+                            )
+                        finally:
+                            revision.cancel()
+                            await asyncio.gather(revision, return_exceptions=True)
+            elif not cand.detection.done() and not turn.flushed.is_set():
                 final = asyncio.ensure_future(turn.flushed.wait())
                 try:
                     await asyncio.wait({cand.detection, final}, return_when=asyncio.FIRST_COMPLETED)
@@ -903,13 +1227,19 @@ class TurnDetector:
                     final.cancel()
             elif not cand.detection.done():
                 await asyncio.wait({cand.detection})
+            await self._require_late_quiet(turn)
             if self._changed(turn, cand):
                 self.final_rechecks += 1
-                final = self._text(turn)
-                if turn.held_qid is not None and self._extends(cand.text, final):
+                final = self._revision_text(turn)
+                if (
+                    turn.held_qid is not None
+                    and not turn.late_recovery_used
+                    and self._extends(cand.text, final)
+                ):
                     cand.detection.cancel()
                     cand = self._redetect(turn, final, cand.match)
                 else:
+                    self._withdraw_shown(turn)
                     cand.cancel()
                     cand = self._start(turn, final)
                 continue
@@ -927,6 +1257,8 @@ class TurnDetector:
         """Shown before the detector (module doc): once the STT final is in and the held pass
         is on that text, a plain question in a one-on-one call goes on screen while the
         detector is still deciding."""
+        if turn.late_recovery_used:
+            return  # Recovered text is published only after the bounded quiet checks.
         n = self.first_show_min_words
         if n is None or self.group_call():
             return
@@ -943,6 +1275,12 @@ class TurnDetector:
         qid = self._show(turn, cand.text, FIRST, speculative=True, match=cand.match)
         turn.first_qid = turn.speculative_qid = qid
         self.host.retype_question(qid, FIRST)  # marked as shown first; typed for now
+
+    def _withdraw_shown(self, turn: _Turn) -> None:
+        if turn.speculative_qid is not None:
+            self.speculative_cancels += 1
+            self.host.cancel_question(turn.speculative_qid)
+            turn.speculative_qid = turn.first_qid = None
 
     async def _turn(self, turn: _Turn) -> None:
         t0 = turn.t0
@@ -963,61 +1301,94 @@ class TurnDetector:
         if not self.utterance():  # no text yet: start on the first interim or final
             await self._wait_text(t0 + self.final_wait_s)
             if not self.utterance():
+                if (
+                    self.late_first_text_recovery_s is not None
+                    and self.turn is turn
+                    and not self.speaking
+                    and turn.capture_start_ms is not None
+                    and turn.capture_end_ms is not None
+                    and 0 <= turn.capture_start_ms < turn.capture_end_ms
+                ):
+                    turn.no_text_exit = True
+                    turn.late_recovery_pending = True
                 return
         cand: _Candidate | None = None
         try:
             if early is not None:
                 cand = self._adopt(turn, early)
+                turn.early_text = early.cand.text
                 if early_longer:
                     cand.detection.cancel()
                     cand = self._redetect(turn, self.utterance(), cand.match)
             else:
                 cand = self._start(turn, self.utterance())
-            first = asyncio.ensure_future(self._first(turn))
-            try:
-                cand, detection = await self._decide(turn, cand)
-            finally:
-                first.cancel()
-                await asyncio.gather(first, return_exceptions=True)
             while True:
-                recovered = await self._recover(turn, detection)
-                # Recovery waits longer than the normal final deadline. A final arriving
-                # in that interval must replace the stale held answer, not just its label.
-                if self._changed(turn, cand):
+                first = asyncio.ensure_future(self._first(turn))
+                try:
                     cand, detection = await self._decide(turn, cand)
+                finally:
+                    first.cancel()
+                    await asyncio.gather(first, return_exceptions=True)
+                recovered = await self._recover(turn, detection)
+                await self._require_late_quiet(turn)
+                # Both recovery and the ordinary speech-end waits can outlast the
+                # detector. A final that adds a constraint must replace its generation,
+                # not just relabel a request already based on the interim.
+                if self._changed(turn, cand):
                     continue
                 if recovered is not detection:
                     self.recovered += 1
-                detection = recovered
-                break
-            detection = replace(detection, decided_ms=max(0, int((time.monotonic() - t0) * 1000)))
-            if not detection.fires():
-                self._discard_held(turn)
-                if turn.first_qid is not None:  # shown before the detector said no
-                    self.first_withdrawn += 1
-                    self.host.cancel_question(turn.first_qid)
-                    turn.first_qid = turn.speculative_qid = None
-                if detection.decision != "wait" or not self._carry(turn):
-                    self._done(turn)  # step 5
+                detection = replace(
+                    recovered, decided_ms=max(0, int((time.monotonic() - t0) * 1000))
+                )
+                if not detection.fires():
+                    self._discard_held(turn)
+                    if turn.first_qid is not None:  # shown before the detector said no
+                        self.first_withdrawn += 1
+                        self.host.cancel_question(turn.first_qid)
+                        turn.first_qid = turn.speculative_qid = None
+                    if detection.decision != "wait" or not self._carry(turn):
+                        self._done(turn)
+                    return
+                await self._wait_release(turn)
+                await self._require_late_quiet(turn)
+                if self._changed(turn, cand) and (
+                    self.committed_final_recheck
+                    or turn.late_recovery_used
+                    or self.early_final_release
+                    or not self._extends(cand.text, self._text(turn))
+                ):
+                    self._withdraw_shown(turn)
+                    continue
+                qid: UUID | None = turn.first_qid
+                silence_over = time.monotonic() >= t0 + self.silence_s
+                if qid is not None:
+                    self.host.retype_question(qid, detection)
+                elif not (silence_over and turn.flushed.is_set()):
+                    qid = self._show(turn, cand.text, detection, speculative=True, match=cand.match)
+                    turn.speculative_qid = qid
+                    self.speculative_starts += 1
+                await self._turn_end(turn)
+                if self._changed(turn, cand) and (
+                    self.committed_final_recheck
+                    or turn.late_recovery_used
+                    or not self._extends(cand.text, self._text(turn))
+                ):
+                    self._withdraw_shown(turn)
+                    continue
+                final_text = self._text(turn) or cand.text
+                turn_end_ms = int((time.monotonic() - t0) * 1000)
+                if qid is None:
+                    qid = self._show(
+                        turn, final_text, detection, speculative=False, match=cand.match
+                    )
+                turn.speculative_qid = None
+                self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
+                self._done(turn)
                 return
-            await self._sleep_until(t0 + self.speculative_s)
-            qid: UUID | None = turn.first_qid
-            silence_over = time.monotonic() >= t0 + self.silence_s
-            if qid is not None:
-                self.host.retype_question(qid, detection)
-            elif not (silence_over and turn.flushed.is_set()):
-                qid = self._show(turn, cand.text, detection, speculative=True, match=cand.match)
-                turn.speculative_qid = qid
-                self.speculative_starts += 1
-            await self._turn_end(turn)
-            final_text = self._text(turn) or cand.text
-            turn_end_ms = int((time.monotonic() - t0) * 1000)
-            if qid is None:
-                qid = self._show(turn, final_text, detection, speculative=False, match=cand.match)
-            turn.speculative_qid = None
-            self.host.confirm_question(qid, final_text, turn_end_ms, self._final_ms(turn))
-            self._done(turn)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, _LateRecoveryExpired) as exc:
+            if self.committed_final_recheck or turn.late_recovery_used:
+                cand = turn.cand or cand  # _decide may be awaiting a replacement candidate.
             if cand is not None and not turn.taken:
                 cand.cancel()
                 await asyncio.gather(
@@ -1026,8 +1397,9 @@ class TurnDetector:
                     return_exceptions=True,
                 )
             self._discard_held(turn)
-            if turn.speculative_qid is not None:
-                self.speculative_cancels += 1
-                self.host.cancel_question(turn.speculative_qid)
-                turn.speculative_qid = turn.first_qid = None
+            self._withdraw_shown(turn)
+            if isinstance(exc, _LateRecoveryExpired):
+                if turn.text is None and self.turn is turn:
+                    self.reset()
+                return
             raise

@@ -23,7 +23,6 @@ from copilot_core.llm import (
     RefusedError,
     Route,
 )
-from copilot_core.pricing import cost_usd
 from copilot_core.providers import openai_params
 from copilot_gateway.config import Settings
 from copilot_gateway.detector import Detector, parse_detection
@@ -34,12 +33,17 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 OPENAI_SETTINGS: dict[str, Any] = {
     "llm_providers": ["openai"],
+    "answer_architecture": "legacy_dual",
+    "adaptive_expert_route": None,
+    "adaptive_technical_legacy": False,
     "openai_detector_model": "gpt-6-luna",
     "openai_detector_reasoning": "none",
     "openai_fast_model": "gpt-6-luna",
     "openai_fast_reasoning": "none",
     "openai_deep_model": "gpt-6.1-sol",
     "openai_deep_reasoning": "low",
+    # Recorded baseline streams predate the Ultrafast product default.
+    "openai_deep_service_tier": None,
     "model_prices": {
         "gpt-6-luna": {"input": 0.1, "cached": 0.01, "output": 0.5},
         "gpt-6.1-sol": {"input": 2, "cached": 0.1, "output": 10},
@@ -350,14 +354,28 @@ async def test_openai_session_records_model_tokens_and_cost(env) -> None:
     assert answers["fast"]["provider"] == "openai"
     assert answers["fast"]["model"] == "gpt-6-luna"
     assert answers["deep"]["model"] == "gpt-6.1-sol"
-    for entry in answers.values():
+    for pass_, name in (("fast", "openai_fast.sse"), ("deep", "openai_deep.sse")):
+        entry = answers[pass_]
+        usage = events(name)[-1]["response"]["usage"]
+        details = usage["input_tokens_details"]
         assert entry["tier"] == "standard"
-        price = cost_usd(
-            entry["model"], entry["tier"], entry["input_tokens"], entry["cached_tokens"],
-            entry["output_tokens"], settings.model_prices, settings.tier_price_multipliers,
-        )  # fmt: skip
-        assert price is not None
-        assert entry["cost_usd"] == float(price) > 0
+        assert entry["input_tokens"] == usage["input_tokens"]
+        assert entry["cached_tokens"] == details["cached_tokens"]
+        assert entry["output_tokens"] == usage["output_tokens"]
+        assert entry["reasoning_tokens"] == usage["output_tokens_details"]["reasoning_tokens"]
+        assert entry["cache_write_tokens"] == details["cache_write_tokens"]
+        # These historical streams do not include disjoint lifetime write counts.
+        assert entry["cache_write_30m_tokens"] is None
+        assert entry["cache_write_12h_tokens"] is None
+
+    # Fast: 3 ordinary * $0.10 + 1565 cached * $0.01 + 71 output * $0.50 per MTok,
+    # rounded to the persisted six decimal places. Observed zero writes are sufficient.
+    assert answers["fast"]["cache_write_tokens"] == 0
+    assert answers["fast"]["cost_usd"] == 0.000051
+    # Deep reports 1589 writes, but no 30m/12h split: preserve unknown cost rather than
+    # assuming a lifetime from the request or charging those writes as ordinary input.
+    assert answers["deep"]["cache_write_tokens"] == 1589
+    assert answers["deep"]["cost_usd"] is None
 
 
 def test_the_detector_hedge_runs_on_the_priority_tier() -> None:
@@ -424,3 +442,55 @@ def test_screen_routes_are_the_fast_and_deep_models_with_time_for_images() -> No
     assert "fast" in hedges
     assert "screen" not in hedges
     assert "screen_code" not in hedges
+
+
+@pytest.mark.parametrize(
+    ("job", "setting"),
+    [
+        ("fast", "openai_fast_service_tier"),
+        ("deep_light", "openai_fast_service_tier"),
+        ("deep", "openai_deep_service_tier"),
+    ],
+)
+@pytest.mark.parametrize("tier", ["default", "fast", "priority", "flex"])
+async def test_live_primary_tier_reaches_responses_without_changing_reasoning(job, setting, tier):
+    captured = []
+    client = openai_client(captured)
+    provider = OpenAIProvider("openai", client)
+    settings = openai_settings(**{setting: tier})
+    route = build_routes(settings, [provider])[job][0]
+    req = prompts.adaptive_pass(ctx(), "", "Explain the mechanism.", "technical", 400)
+    try:
+        chunks = [chunk async for chunk in provider.stream(route.model, req, route.params)]
+    finally:
+        await client.close()
+    assert any(isinstance(chunk, LLMDone) for chunk in chunks)
+    sent = captured[0]["json"]
+    assert sent["service_tier"] == tier
+    assert sent["reasoning"] == {"effort": "low" if job == "deep" else "none"}
+    assert sent["max_output_tokens"] == (2448 if job == "deep" else 400)
+    assert sent["store"] is False
+
+
+@pytest.mark.parametrize("retry", [None, "priority", "fast"])
+def test_answer_primary_tier_preserves_independent_retry_and_other_jobs(retry):
+    from copilot_gateway.testing import ScriptedProvider
+
+    settings = openai_settings(
+        openai_fast_service_tier="fast",
+        openai_deep_service_tier="fast",
+        openai_fast_retry_tier=retry,
+        openai_deep_retry_tier=retry,
+    )
+    routes = build_routes(settings, [ScriptedProvider("openai")])
+    for job in ("fast", "deep_light", "deep"):
+        assert routes[job][0].params["service_tier"] == "fast"
+        assert routes[job][1].params["service_tier"] == (retry or "fast")
+    assert routes["screen_code"][0].params["service_tier"] == "fast"
+    for job in ("detector", "summary", "screen"):
+        assert "service_tier" not in routes[job][0].params
+    # These settings cannot leak OpenAI processing tiers into Claude requests.
+    for job in ("fast", "deep_light", "deep"):
+        assert job_params(settings, "anthropic", job) == job_params(
+            openai_settings(), "anthropic", job
+        )

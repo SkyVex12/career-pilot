@@ -18,6 +18,7 @@ import asyncio
 import bisect
 import contextlib
 import logging
+import math
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
@@ -111,6 +112,8 @@ class ResilientSTT:
         self._prepared: STTStream | None = None
         self.timeline = _Timeline()
         # Audio not yet covered by a final: (capture_ms, pcm), replayed after a reconnect.
+        # A failed write has unknown remote acceptance, so this is at-least-once across
+        # connections; never drop unfinalized PCM or retry it twice on the same socket.
         self.pending: deque[tuple[int, bytes]] = deque()
         self.pending_ms = 0
         self.in_speech = False
@@ -122,10 +125,35 @@ class ResilientSTT:
         self.connected_at = 0.0
         self._lock = asyncio.Lock()
         self._connected = asyncio.Event()
+        self._send_failed = asyncio.Event()
 
     @property
     def provider(self) -> str:
         return self.providers[self.index][0]
+
+    @property
+    def connected(self) -> bool:
+        """The current socket is adopted, replayed, and its receive task is active.
+
+        This is transport readiness, not proof that the provider recognized any audio.
+        """
+        return self.stream is not None and self._connected.is_set()
+
+    async def await_ready(self, timeout_s: float) -> bool:
+        """Observe readiness within a finite budget without starting or cancelling STT.
+
+        Audio may keep buffering during this wait. Timeout/caller cancellation affects
+        only the waiter; run() remains owned by the session. A later drop clears readiness.
+        """
+        if not math.isfinite(timeout_s) or timeout_s <= 0:
+            raise ValueError("readiness timeout must be finite and positive")
+        try:
+            async with asyncio.timeout(timeout_s):
+                while not self.connected:
+                    await self._connected.wait()
+        except TimeoutError:
+            return False
+        return True
 
     # Called from the session's socket reader.
 
@@ -144,8 +172,8 @@ class ResilientSTT:
                 _, old = self.pending.popleft()
                 self.pending_ms -= len(old) // BYTES_PER_MS
             stream = self.stream
-            if stream is None:
-                return  # replayed on connect
+            if stream is None or self._send_failed.is_set():
+                return  # replayed on connect; never keep writing to a failed socket
             self.timeline.add(capture_ms, len(pcm))
             await self._send(stream, stream.send_audio(pcm))
         self.last_audio_at = time.monotonic()
@@ -156,14 +184,19 @@ class ResilientSTT:
         self.flush_pending = True
         self.finalized_at = (self.finalized_at[1], self.timeline.stream_ms)
         async with self._lock:
-            if self.stream is not None:
+            if self.stream is not None and not self._send_failed.is_set():
                 await self._send(self.stream, self.stream.finalize())
 
-    async def _send(self, stream: STTStream, op: Awaitable[None]) -> None:
+    async def _send(self, stream: STTStream, op: Awaitable[None]) -> bool:
         try:
             await op
-        except Exception as e:  # the reader sees the drop and the run loop reconnects
+        except Exception as e:
             log.info("%s send failed: %s", stream.name, e)
+            if self.stream is stream:
+                self._connected.clear()
+                self._send_failed.set()  # A write can fail while the reader stays open.
+            return False
+        return True
 
     # The supervisor task.
 
@@ -193,6 +226,7 @@ class ResilientSTT:
             while True:
                 await self._run_once()
         finally:
+            self._connected.clear()
             stream, self.stream = self.stream, None
             if stream is not None:
                 await _close_quietly(stream)
@@ -202,6 +236,8 @@ class ResilientSTT:
             await asyncio.gather(*self._closing, return_exceptions=True)
 
     async def _run_once(self) -> None:
+        self._connected.clear()
+        self._send_failed.clear()
         name, factory = self.providers[self.index]
         stream, self._prepared = self._prepared, None
         if stream is None:
@@ -223,8 +259,9 @@ class ResilientSTT:
             self.finalized_at = (None, None)  # a new stream answers only the replayed Finalize
             for capture_ms, pcm in self.pending:  # replay audio not covered by a final
                 self.timeline.add(capture_ms, len(pcm))
-                await self._send(stream, stream.send_audio(pcm))
-            if self.flush_pending:
+                if not await self._send(stream, stream.send_audio(pcm)):
+                    break
+            if self.flush_pending and not self._send_failed.is_set():
                 await self._send(stream, stream.finalize())
             self.connected_at = time.monotonic()
             self.awaiting_since = self.connected_at if self.pending else None
@@ -232,6 +269,7 @@ class ResilientSTT:
             asyncio.create_task(self._read(stream)),
             asyncio.create_task(self._watchdog()),
             asyncio.create_task(self._keepalive(stream)),
+            asyncio.create_task(self._watch_writes()),
         ]
         try:
             done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -240,6 +278,7 @@ class ResilientSTT:
                 if (exc := task.exception()) is not None:
                     reason = f"{type(exc).__name__}: {exc}"
         finally:
+            self._connected.clear()
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
@@ -271,9 +310,19 @@ class ResilientSTT:
             log.warning("switching stt provider to %s", self.provider)
         await asyncio.sleep(min(0.1 * self.failures, 1.0))
 
+    async def _watch_writes(self) -> None:
+        await self._send_failed.wait()
+        raise ConnectionError("STT write failed")
+
     async def _read(self, stream: STTStream) -> None:
-        async for result in stream.results():
-            await self._handle(stream, result)
+        if self._send_failed.is_set():
+            return  # Failed replay is not ready; the supervisor will replay on a new socket.
+        self._connected.set()
+        try:
+            async for result in stream.results():
+                await self._handle(stream, result)
+        finally:
+            self._connected.clear()
 
     async def _handle(self, stream: STTStream, r: STTResult) -> None:
         now = time.monotonic()

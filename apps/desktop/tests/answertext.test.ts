@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSuggested, readableLine } from "../src/AnswerText";
+import { answerLines, readableLine } from "../src/AnswerText";
 
 // 2026-11-17: citation ids ([n:w179]) showed on the overlay as stray letters; they are left out
 // of what is read, and a half-written one is held back while the answer streams.
@@ -16,11 +16,19 @@ describe("citation ids", () => {
   });
 });
 
-// 2026-10-28: interview answers may suggest details not in the user's data, each line ending
-// in [~]; the overlay dims those lines and tags them "check".
-describe("suggested details", () => {
-  it("marks a line that ends in [~]", () => {
-    expect(isSuggested("Batched upserts on the deal ID [~]")).toBe(true);
-    expect(isSuggested("Proposed HubSpot workflows [n:5b60]")).toBe(false);
+describe("legacy suggestion notation", () => {
+  it("leaves normal answer text without the old marker", () => {
+    expect(readableLine("Batched upserts on the deal ID [~]")).toBe("Batched upserts on the deal ID");
+    expect(readableLine("[~] I would compare both options.").trim()).toBe("I would compare both options.");
+    expect(readableLine("Proposed HubSpot workflows [n:5b60] [~]")).toBe("Proposed HubSpot workflows");
+  });
+
+  it("holds only a reserved partial marker and omits empty notation rows", () => {
+    expect(readableLine("I would compare both options. [~", true)).toBe("I would compare both options.");
+    expect(readableLine("Use [array] syntax.", true)).toBe("Use [array] syntax.");
+    expect(readableLine("Use arrays [", false)).toBe("Use arrays [");
+    expect(answerLines("- [~]", true)).toEqual([]);
+    expect(answerLines("[~", true)).toEqual([]);
+    expect(answerLines("- First answer. [~]\n- Next answer.")).toEqual(["- First answer.", "- Next answer."]);
   });
 });
