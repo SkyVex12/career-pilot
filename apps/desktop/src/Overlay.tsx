@@ -449,7 +449,14 @@ function AnswersPane({ title, paneRef, newestId, children }: { title?: string; p
   };
   return (
     <section className="ov-pane ov-pane-answers" aria-label={title ?? "Suggestions"}>
-      {title && <h2 className="ov-pane-head">{title}</h2>}
+      <div className="ov-answer-head">
+        {title && <h2 className="ov-pane-head">{title}</h2>}
+        {unseen && (
+          <button type="button" className="ov-jump ov-jump-top" onClick={toTop}>
+            New answer ↑
+          </button>
+        )}
+      </div>
       <div
         className="ov-pane-body"
         ref={paneRef}
@@ -459,11 +466,6 @@ function AnswersPane({ title, paneRef, newestId, children }: { title?: string; p
       >
         {children}
       </div>
-      {unseen && (
-        <button type="button" className="ov-jump ov-jump-top" onClick={toTop}>
-          New answer ↑
-        </button>
-      )}
     </section>
   );
 }
@@ -772,7 +774,7 @@ function ScreenTasks({ reading }: { reading: NonNullable<QuestionView["screen"]>
 function PassStatus({ state }: { state: PassState }) {
   const shown = state.tone === "wait" || state.tone === "warn";
   return (
-    <p className={cx("pass-status", `pass-state-${state.tone}`, !shown && "ui-visually-hidden")}>
+    <p key={shown ? "visible" : "hidden"} className={cx("pass-status", `pass-state-${state.tone}`, !shown && "ui-visually-hidden")}>
       {shown && <span aria-hidden="true">{state.icon} </span>}
       {state.text}
     </p>

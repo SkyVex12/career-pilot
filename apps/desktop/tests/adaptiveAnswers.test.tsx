@@ -72,4 +72,33 @@ describe("adaptive answers", () => {
     expect(screen.getByRole("group", { name: "Answer" }).querySelector("code")?.textContent).toBe(primary);
   });
 
+  it.each(["done", "error"] as const)("keeps status positioning stable while first text arrives and then %s", async (terminal) => {
+    start("adaptive");
+    const answer = await screen.findByRole("group", { name: "Answer" });
+    const waiting = answer.querySelector(".pass-status");
+    expect(waiting).toHaveClass("pass-state-wait");
+    expect(waiting).not.toHaveClass("ui-visually-hidden");
+    await act(() => emit("copilot://event", delta("fast", "I am based in Austin.")));
+    const writing = answer.querySelector(".pass-status");
+    // Changing position on an existing node suppresses Chromium's reading anchor.
+    // The visible and screen-reader-only states must use different layout nodes.
+    expect(waiting).not.toBeInTheDocument();
+    expect(writing).not.toBe(waiting);
+    expect(writing).toHaveClass("ui-visually-hidden");
+    expect(writing?.textContent).not.toBe("");
+    expect(answer.querySelectorAll(".pass-status")).toHaveLength(1);
+    if (terminal === "done") {
+      await act(() => emit("copilot://event", done("fast")));
+      expect(answer.querySelector(".pass-status")).toBe(writing);
+      expect(writing).toHaveClass("ui-visually-hidden");
+    } else {
+      await act(() => emit("copilot://event", message({ type: "answer.error", question_id: "q", pass: "fast", code: "timeout" })));
+      expect(writing).not.toBeInTheDocument();
+      expect(answer.querySelector(".pass-status")).toHaveClass("pass-state-warn");
+      expect(answer.querySelector(".pass-status")).not.toHaveClass("ui-visually-hidden");
+    }
+    expect(answer).toHaveTextContent("I am based in Austin.");
+    expect(answer.querySelectorAll(".pass-status")).toHaveLength(1);
+  });
+
 });
