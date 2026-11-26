@@ -42,7 +42,9 @@ async def test_preferences_remain_bound_to_current_generation(env, monkeypatch, 
     )
 
 
-async def test_benign_polite_final_keeps_existing_generation(env, monkeypatch):
+@pytest.mark.parametrize("final_delay_s", [0, 0.02])
+async def test_benign_polite_final_keeps_existing_generation(env, monkeypatch, final_delay_s):
+    env.stt.final_delay_s = final_delay_s
     env.stt.final_suffix = " please"
     async with lab_test.live_lab(env, monkeypatch, "frozen") as (lab, client):
         q = await lab_test.start_partial(lab, client)
@@ -58,7 +60,12 @@ async def test_benign_polite_final_keeps_existing_generation(env, monkeypatch):
         lab.provider_release.set()
         await client.wait_type("answer.done", question_id=str(q.qid), pass_="fast")
         await lab.session.answers.wait_idle()
-        assert len(lab.decisions) == 1
+        # A final arriving before the turn consumes the early decision can be
+        # reclassified. Either ordering must retain the same answer generation.
+        assert lab.decisions in (
+            [lab_test.QUESTION],
+            [lab_test.QUESTION, lab_test.QUESTION + " please"],
+        )
         assert len(lab.requests) == 1
         assert lab.memory_calls == [(lab_test.QUESTION, "deep")]
         assert lab_test.QUESTION in str(lab.requests[0][1].content)

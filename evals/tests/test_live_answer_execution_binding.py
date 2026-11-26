@@ -69,7 +69,10 @@ def fixture(tmp_path, monkeypatch):
         max_cost=None,
     )
     settings = Settings(
-        openai_detector_retry_tier=None, openai_fast_retry_tier=None, openai_deep_retry_tier=None
+        openai_detector_retry_tier=None,
+        openai_fast_retry_tier=None,
+        openai_deep_retry_tier=None,
+        openai_deep_service_tier=None,
     )
     variants = replay.configured_conditions(args, settings, None)
     identity = source_identity(

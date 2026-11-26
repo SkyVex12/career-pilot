@@ -209,7 +209,10 @@ async def test_offline_preflight_validates_schedule_before_any_provider(tmp_path
         max_cost=None,
     )
     settings = Settings(
-        openai_detector_retry_tier=None, openai_fast_retry_tier=None, openai_deep_retry_tier=None
+        openai_detector_retry_tier=None,
+        openai_fast_retry_tier=None,
+        openai_deep_retry_tier=None,
+        openai_deep_service_tier=None,
     )
     conditions = replay.configured_conditions(args, settings, None)
     manifest = {

@@ -42,6 +42,8 @@ OPENAI_SETTINGS: dict[str, Any] = {
     "openai_fast_reasoning": "none",
     "openai_deep_model": "gpt-6.1-sol",
     "openai_deep_reasoning": "low",
+    # Recorded baseline streams predate the Ultrafast product default.
+    "openai_deep_service_tier": None,
     "model_prices": {
         "gpt-6-luna": {"input": 0.1, "cached": 0.01, "output": 0.5},
         "gpt-6.1-sol": {"input": 2, "cached": 0.1, "output": 10},
@@ -484,7 +486,8 @@ def test_answer_primary_tier_preserves_independent_retry_and_other_jobs(retry):
     for job in ("fast", "deep_light", "deep"):
         assert routes[job][0].params["service_tier"] == "fast"
         assert routes[job][1].params["service_tier"] == (retry or "fast")
-    for job in ("detector", "summary", "screen", "screen_code"):
+    assert routes["screen_code"][0].params["service_tier"] == "fast"
+    for job in ("detector", "summary", "screen"):
         assert "service_tier" not in routes[job][0].params
     # These settings cannot leak OpenAI processing tiers into Claude requests.
     for job in ("fast", "deep_light", "deep"):
