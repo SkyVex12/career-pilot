@@ -49,11 +49,14 @@ def test_store_replaces_only_changed_record_and_exports_original_array(tmp_path)
     values = [{"id": "b", "text": "Original."}, {"id": "a", "text": "Second."}]
     for value in values:
         store.put("trials", value["id"], value)
-    paths = list((store.root / "trials").glob("*.json"))
-    untouched = paths[1].read_bytes()
+    paths = {
+        json.loads(path.read_text(encoding="utf-8"))["key"]: path
+        for path in (store.root / "trials").glob("*.json")
+    }
+    untouched = paths["a"].read_bytes()
     values[0]["text"] = "Changed."
     store.put("trials", "b", values[0])
-    assert paths[1].read_bytes() == untouched
+    assert paths["a"].read_bytes() == untouched
     assert len(list((store.root / "trials").glob("*.json"))) == 2
     assert not (tmp_path / "trials.json").exists()
     restored = RecordStore(tmp_path)

@@ -192,12 +192,19 @@ async def test_a_cancelled_pass_is_logged_with_its_estimated_cost(env) -> None:
         c = ProtocolClient(gw.url)
         await c.start()
         await c.say("What is your biggest strength?", capture_ms=0)
-        await c.wait_type("answer.delta", pass_="fast")
+        delta = await c.wait_type("answer.delta", pass_="fast")
         await c.frame(0, 0b01, b" and how do you use it?".ljust(3200, b"\0"), 1000)
-        await c.wait_type("question.cancelled")
+        cancellation = await c.wait_type("question.cancelled")
+        assert cancellation["question_id"] == delta["question_id"]
         await c.send({"type": "session.end"})
         await c.closed()
-    cancelled = [e for e in await session_log(env, c.session_id) if e["kind"] == "pass_cancelled"]
+    # The revised utterance can start a new held question before session.end.
+    # Its shutdown cancellation is distinct from the speculative pass under test.
+    cancelled = [
+        e
+        for e in await session_log(env, c.session_id)
+        if e["kind"] == "pass_cancelled" and e["question_id"] == delta["question_id"]
+    ]
     assert len(cancelled) == 1
     e = cancelled[0]
     assert (e["pass"], e["reason"], e["model_started"]) == ("fast", "speculative", True)
