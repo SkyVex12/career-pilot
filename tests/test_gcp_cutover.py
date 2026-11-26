@@ -125,6 +125,7 @@ def shell(tmp_path: Path, body: str) -> subprocess.CompletedProcess[str]:
 export PATH=/usr/bin:/bin:$PATH
 source {shlex.quote(bash_path(HOST))}
 REAL_ASSERT_DRAINED=$(declare -f assert_drained)
+REAL_DOCKER_RUN=$(declare -f docker_run)
 STATE=.
 RUN=$STATE/run
 DATA=$STATE
@@ -225,6 +226,7 @@ mount_data() { :; }
 firewall() { :; }
 swap() { :; }
 registry() { echo example/repo; }
+attr() { :; }
 docker-credential-gcr() { :; }
 mkdir() { :; }
 touch "$MAINTENANCE"
@@ -262,3 +264,106 @@ write_env() { :; }
     assert "docker pull" in trace
     assert "docker_run migrate" not in trace
     assert "systemctl stop" not in trace
+
+
+@pytest.mark.parametrize("tls_enabled", [False, True])
+def test_boot_preserves_configured_tls_while_app_writers_are_held(tmp_path, tls_enabled):
+    result = shell(
+        tmp_path,
+        """
+mount_data() { :; }
+firewall() { :; }
+swap() { :; }
+registry() { echo example/repo; }
+docker-credential-gcr() { :; }
+mountpoint() { return 0; }
+HOME=$STATE/home
+chown() { log "chown $*"; }
+chmod() { log "chmod $*"; }
+"""
+        + ("attr() { echo coruby.example.invalid; }\n" if tls_enabled else "attr() { :; }\n")
+        + 'touch "$MAINTENANCE"\nboot\n',
+    )
+    assert result.returncode == 0, result.stderr
+    trace = (tmp_path / "trace").read_text()
+    assert ("systemctl start copilot-tls" in trace) is tls_enabled
+    assert "systemctl start copilot-proxy" not in trace
+    assert "copilot-scheduler.timer" not in trace
+    if tls_enabled:
+        assert "chown 10006:10006" in trace
+        assert "chmod 700" in trace
+
+
+def test_tls_workload_has_no_application_credentials_and_retains_certificates(tmp_path):
+    result = shell(
+        tmp_path,
+        """
+eval "$REAL_DOCKER_RUN"
+attr() {
+  case "$1" in
+    copilot-tls-domain) echo coruby.example.invalid ;;
+    copilot-image-tls) echo caddy:test ;;
+    *) return 1 ;;
+  esac
+}
+mountpoint() { return 0; }
+write_env() { die 'application credentials must not be loaded for TLS'; }
+docker() { log "docker $*"; }
+docker_run tls wait
+""",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "run/tls.env").read_bytes() == b""
+    trace = (tmp_path / "trace").read_text()
+    assert "--user 10006:10006" in trace
+    assert "--cap-drop ALL --cap-add NET_BIND_SERVICE" in trace
+    assert "COPILOT_TLS_DOMAIN=coruby.example.invalid" in trace
+    assert "/var/lib/copilot/Caddyfile:/etc/caddy/Caddyfile:ro" in trace
+    assert "./caddy/data:/data" in trace
+    assert "./caddy/config:/config" in trace
+    assert "caddy:test" in trace
+
+
+def test_proxy_keeps_existing_forwarding_config_writable_for_maintenance(tmp_path):
+    result = shell(
+        tmp_path,
+        """
+[() {
+  if test "$#" -eq 3 && test "$1" = -f && test "$2" = /var/lib/copilot/nginx.conf; then
+    return 0
+  fi
+  builtin [ "$@"
+}
+cp() {
+  test "$1" = /var/lib/copilot/nginx.conf
+  printf 'existing forwarding configuration\\n' > "$2"
+}
+workload proxy
+printf '%s\\n' "${ARGS[@]}" > "$STATE/proxy-args"
+""",
+    )
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "run/nginx.conf").read_text() == "existing forwarding configuration\n"
+    args = (tmp_path / "proxy-args").read_text().splitlines()
+    assert "./run/nginx.conf:/etc/nginx/nginx.conf" in args
+    assert "./run/nginx.conf:/etc/nginx/nginx.conf:ro" not in args
+
+
+@pytest.mark.parametrize("tls_enabled", [False, True])
+def test_firewall_opens_https_only_when_configured_and_keeps_metadata_denied(tmp_path, tls_enabled):
+    result = shell(
+        tmp_path,
+        """
+iptables() { log "iptables $*"; test "$1" != -C; }
+"""
+        + ("attr() { echo coruby.example.invalid; }\n" if tls_enabled else "attr() { :; }\n")
+        + "firewall\n",
+    )
+    assert result.returncode == 0, result.stderr
+    trace = (tmp_path / "trace").read_text()
+    assert "-A INPUT -p tcp --dport 80 -j ACCEPT" in trace
+    assert ("-A INPUT -p tcp --dport 443 -j ACCEPT" in trace) is tls_enabled
+    assert (
+        "-I OUTPUT 1 -d 169.254.169.254/32 -p tcp --dport 80 "
+        "-m owner --uid-owner 10003-10099 -j REJECT" in trace
+    )

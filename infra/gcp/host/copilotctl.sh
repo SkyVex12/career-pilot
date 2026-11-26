@@ -84,7 +84,7 @@ tag() { cat "$STATE/image-tag" 2>/dev/null || echo none; }
 registry() { attr copilot-registry; }
 image() {
   case $1 in
-    postgres|valkey|elasticmq) attr "copilot-image-$1" ;;
+    postgres|valkey|elasticmq|tls) attr "copilot-image-$1" ;;
     migrate|scheduler) echo "$(registry)/worker:$(tag)" ;;
     *) echo "$(registry)/$1:$(tag)" ;;
   esac
@@ -123,6 +123,22 @@ workload() {
       ;;
     proxy)
       ARGS=(--memory 96m --health-cmd "wget -q -O /dev/null http://127.0.0.1/healthz" --health-interval 15s)
+      # Boot also supplies forwarding rules for proxy images that predate HTTPS.
+      # This copy stays writable for the maintenance admission gate.
+      if [ -f /var/lib/copilot/nginx.conf ]; then
+        cp /var/lib/copilot/nginx.conf "$RUN/nginx.conf"
+        ARGS+=(-v "$RUN/nginx.conf:/etc/nginx/nginx.conf")
+      fi
+      ;;
+    tls)
+      local domain
+      domain=$(attr copilot-tls-domain)
+      [ -n "$domain" ] || die "copilot-tls-domain is empty"
+      mountpoint -q "$DATA" || die "the TLS certificate data disk is not mounted"
+      ARGS=(--memory 128m --user 10006:10006 --cap-drop ALL --cap-add NET_BIND_SERVICE
+        --env "COPILOT_TLS_DOMAIN=$domain"
+        -v /var/lib/copilot/Caddyfile:/etc/caddy/Caddyfile:ro
+        -v "$DATA/caddy/data:/data" -v "$DATA/caddy/config:/config")
       ;;
     gateway) python_health 8081; ARGS=(--memory 512m --stop-timeout 30 --user 10003 "${HEALTH[@]}"); CMD=(copilot-gateway) ;;
     api) python_health 8080; ARGS=(--memory 384m --user 10001 "${HEALTH[@]}"); CMD=(copilot-api) ;;
@@ -136,7 +152,13 @@ workload() {
 docker_run() {
   # docker run for one workload; `exec` keeps it the unit's main process.
   local name=$1 mode=$2
-  write_env "$name"
+  if [ "$name" = tls ]; then
+    # The edge has no application credentials and cannot access VM metadata.
+    mkdir -p "$RUN" && chmod 700 "$RUN"
+    install -m 600 /dev/null "$RUN/tls.env"
+  else
+    write_env "$name"
+  fi
   workload "$name"
   local -a run=(docker run --rm --name "copilot-$name" --network host --env-file "$RUN/$name.env"
     --log-driver json-file --log-opt max-size=10m --log-opt max-file=3 "${ARGS[@]}"
@@ -162,8 +184,11 @@ mount_data() {
 }
 
 firewall() {
-  # COS drops inbound traffic except SSH; the VPC firewall decides who reaches port 80.
+  # COS drops inbound traffic except SSH; the VPC firewall also filters these ports.
   iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+  if [ -n "$(attr copilot-tls-domain 2>/dev/null || true)" ]; then
+    iptables -C INPUT -p tcp --dport 443 -j ACCEPT 2>/dev/null || iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+  fi
   # Metadata server tokens: root, the API and the workers only (see the uids above). OS Login
   # users (large uids) keep it for their name lookups. Only its HTTP port is closed: the same
   # address is the VM's DNS resolver (port 53), which every container needs.
@@ -193,6 +218,7 @@ boot() {
   systemctl daemon-reload
   systemctl start copilot-postgres copilot-valkey copilot-elasticmq
   systemctl start copilot-backup.timer
+  start_tls
   if [ -f "$MAINTENANCE" ]; then
     log "maintenance hold survives reboot; app writers, scheduler and idle stop stay disabled"
     return
@@ -203,6 +229,15 @@ boot() {
   else
     log "no image tag deployed yet: the app services wait for the first deploy"
   fi
+}
+
+start_tls() {
+  [ -n "$(attr copilot-tls-domain 2>/dev/null || true)" ] || return 0
+  mountpoint -q "$DATA" || die "the TLS certificate data disk is not mounted"
+  mkdir -p "$DATA/caddy/data" "$DATA/caddy/config"
+  chown 10006:10006 "$DATA/caddy" "$DATA/caddy/data" "$DATA/caddy/config"
+  chmod 700 "$DATA/caddy" "$DATA/caddy/data" "$DATA/caddy/config"
+  systemctl start copilot-tls
 }
 
 # --- Deploys ---------------------------------------------------------------------------------
@@ -599,7 +634,7 @@ esac
 case ${1:-} in
   boot) boot ;;
   run)
-    case $2 in postgres|valkey|elasticmq) ;; *)
+    case $2 in postgres|valkey|elasticmq|tls) ;; *)
       [ ! -f "$MAINTENANCE" ] || [ -f "$RUN/cutover-start" ] || die "maintenance hold"
       ;;
     esac
