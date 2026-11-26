@@ -35,6 +35,30 @@ _STORY = re.compile(
 )
 
 
+_CODE_LANGUAGE = r"(?:Python|JavaScript|TypeScript|Java|C\+\+|C\#|Rust|Go|Ruby|Kotlin|Swift|SQL)"
+_CODE_ACTION = r"\b(?:write|implement|code)\s+(?:(?:me|us)\s+)?(?:(?:a|an|the)\s+)?"
+_EXPLICIT_CODE = re.compile(
+    _CODE_ACTION
+    + rf"(?:{_CODE_LANGUAGE}\s+)?"
+    + r"(?:(?:async|asynchronous|bounded|recursive|iterative)\s+){0,2}"
+    + r"(?:function|method|class|algorithm|code)\b"
+    + r"|\b(?:write|implement|code)\s+(?:[^\s.!?;:,]+\s+){0,12}in\s+"
+    + _CODE_LANGUAGE
+    + r"(?=\s|[.,;:?!()]|$)"
+    + r"|\b(?:write|implement)\s+(?:(?:a|an|the)\s+)?SQL\s+query\b"
+    + r"|\bimplement\s+[A-Za-z_]\w*\s*\(",
+    re.I,
+)
+
+
+def is_explicit_coding_request(text: str) -> bool:
+    """Recognize direct code-writing tasks; do not assign a detector type."""
+    return any(
+        not re.search(r"\b(?:not|don't)\s+$", text[: match.start()], re.I)
+        for match in _EXPLICIT_CODE.finditer(text)
+    )
+
+
 @dataclass(frozen=True)
 class AnswerPlan:
     depth: Depth
@@ -54,7 +78,11 @@ def plan_answer(
     """Choose a bounded answer, without interpreting a generated answer as evidence."""
     if expert:
         return AnswerPlan("expert", "deep", 1200)
-    needs_expert = qtype in {"system_design", "coding"} or bool(_DESIGN.search(text))
+    needs_expert = (
+        qtype in {"system_design", "coding"}
+        or bool(_DESIGN.search(text))
+        or is_explicit_coding_request(text)
+    )
     needs_expert |= detector_depth == "deep" and qtype in {
         "technical",
         "behavioral",

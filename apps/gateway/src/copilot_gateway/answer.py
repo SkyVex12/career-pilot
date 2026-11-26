@@ -57,6 +57,7 @@ from copilot_gateway.adaptive import (
     Architecture,
     SentenceBoundary,
     bounded_chunks,
+    is_explicit_coding_request,
     plan_answer,
 )
 from copilot_gateway.config import PreparedThreshold, Settings
@@ -1493,11 +1494,14 @@ class AnswerEngine:
         if length == "default":
             return req
         # A preference changes the next request, never an in-flight stream. Screens keep
-        # their code budget; Concise also preserves already-classified spoken coding.
-        # Brevity must not remove required code or the READ header.
+        # their code budget; Concise also preserves classified or explicit spoken coding.
+        # Local recognition uses this request's snapshot and never changes detector state.
         limit = req.max_tokens
         if q.screen is None and self.open_problem() is None:
-            if length == "concise" and q.qtype != "coding":
+            coding = q.qtype == "coding" or (
+                self.strategy(q) != "legacy_dual" and is_explicit_coding_request(snapshot.text)
+            )
+            if length == "concise" and not coding:
                 limit = min(limit, max(100, round(limit * 0.6)))
             elif length == "detailed" and self.strategy(q) != "legacy_dual":
                 limit = min(self.host.settings.adaptive_max_tokens, round(limit * 1.5))
