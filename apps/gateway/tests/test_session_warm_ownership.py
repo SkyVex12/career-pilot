@@ -265,7 +265,9 @@ async def test_repeated_stop_does_not_recancel_returned_prewarm_usage() -> None:
 
     obj.router = SimpleNamespace(prewarm=prewarm)
     obj._prompt_ctx = prompts.PromptContext("Alex", "interview", None, None)
-    obj.settings = SimpleNamespace(prewarm_jobs=["fast"], fast_pass_max_tokens=50)
+    obj.settings = SimpleNamespace(
+        answer_architecture="legacy_dual", prewarm_jobs=["fast"], fast_pass_max_tokens=50
+    )
     obj._cost = lambda _: 0.001
     obj.log_entry = records.append
     obj._start_warm(obj.prewarm_prompts)

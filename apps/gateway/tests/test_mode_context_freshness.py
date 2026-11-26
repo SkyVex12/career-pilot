@@ -109,6 +109,7 @@ def complete_host() -> Any:
     obj.router = SimpleNamespace(warm=AsyncMock(), prewarm=AsyncMock())
     obj._prompt_ctx = prompts.PromptContext("Alex", "standup", None, None)
     obj.settings = SimpleNamespace(
+        answer_architecture="legacy_dual",
         prewarm_jobs=["fast", "deep", "deep_light"],
         fast_pass_max_tokens=50,
         deep_pass_max_tokens=100,

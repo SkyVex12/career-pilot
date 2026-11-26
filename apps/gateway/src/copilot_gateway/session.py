@@ -17,6 +17,7 @@ import math
 import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, cast, get_args
@@ -46,7 +47,7 @@ from copilot_core.db import actor_account, user_tx
 from copilot_core.embed import Embedder
 from copilot_core.identities import Identities
 from copilot_core.ids import uuid7
-from copilot_core.llm import LLMDone, ModelRouter
+from copilot_core.llm import LLMDone, ModelRouter, prompt_cache_key
 from copilot_core.packs import (
     PREPARED_DIGEST_POLICY,
     PREPARED_STANDUP_POLICY,
@@ -1940,18 +1941,49 @@ class Session:
         mode change; the default cache lives 30 minutes on OpenAI and 5 on Claude, and the
         questions that follow keep it warm."""
         ctx = self._prompt_ctx
+        adaptive = self.settings.answer_architecture != "legacy_dual"
+        warmed: list[tuple[object, str, Mapping[str, Any], str]] = []
         for job in self.settings.prewarm_jobs:
             if not self._warm_current():
                 return
-            req = prompts.fast_pass(ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens)
-            if job in ("deep", "deep_light"):
-                req = prompts.deep_pass(
-                    ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+            target = None
+            if adaptive:
+                expert = job in ("deep", "deep_light")
+                req = prompts.adaptive_pass(
+                    ctx, "", "(warm-up)", "other", self.settings.adaptive_max_tokens,
+                    depth="expert" if expert else "standard", expert=expert,
+                )  # fmt: skip
+                route = next(
+                    (r for r in self.router.routes.get(job, ()) if not r.refusal_only), None
                 )
+                key = prompt_cache_key(req.system)
+                if route is not None and key is not None:
+                    # Keep configured targets/order, but do not pay twice for an identical
+                    # prefix after a successful write in this invocation. A failed/unsupported
+                    # warm does not prevent the next configured attempt. Snapshot nested params.
+                    if any(
+                        provider is route.provider
+                        and model == route.model
+                        and params == route.params
+                        and prefix == key
+                        for provider, model, params, prefix in warmed
+                    ):
+                        continue
+                    target = (route.provider, route.model, deepcopy(route.params), key)
+            else:
+                req = prompts.fast_pass(
+                    ctx, "", "(warm-up)", None, self.settings.fast_pass_max_tokens
+                )
+                if job in ("deep", "deep_light"):
+                    req = prompts.deep_pass(
+                        ctx, "", "(warm-up)", "other", self.settings.deep_pass_max_tokens
+                    )
             started = time.monotonic()
             done = await self.router.prewarm(job, req)
             if done is None:
                 continue
+            if target is not None:
+                warmed.append(target)
             ms = int((time.monotonic() - started) * 1000)
             log.info(
                 "prewarmed %s on %s: %s tokens in %s ms",
