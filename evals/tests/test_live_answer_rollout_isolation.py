@@ -193,7 +193,7 @@ async def test_execute_rejects_cli_profile_conflict_before_dispatch(
 async def test_offline_cli_preflight_uses_the_same_policy_as_live_conditions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    actual_build = replay.build_router
+    actual_build = build_router
     seen = []
 
     def checked_router(settings: Settings, providers: list[Any]) -> Any:

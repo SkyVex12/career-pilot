@@ -46,7 +46,8 @@ def configuration():
 
 def sharing_error():
     error = PermissionError(13, "PRIVATE payload or filename must not be exported")
-    error.winerror = 5
+    # Simulate the Windows-only attribute on Linux CI too.
+    error.winerror = 5  # pyright: ignore[reportAttributeAccessIssue]
     return error
 
 
