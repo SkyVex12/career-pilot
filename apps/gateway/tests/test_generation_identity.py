@@ -60,7 +60,7 @@ async def test_benign_polite_final_keeps_existing_generation(env, monkeypatch):
         await lab.session.answers.wait_idle()
         assert len(lab.decisions) == 1
         assert len(lab.requests) == 1
-        assert lab.memory_calls == [(lab_test.QUESTION, "fast")]
+        assert lab.memory_calls == [(lab_test.QUESTION, "deep")]
         assert lab_test.QUESTION in str(lab.requests[0][1].content)
         assert lab_test.QUESTION + " please" not in str(lab.requests[0][1].content)
 
@@ -110,7 +110,7 @@ async def test_material_final_replaces_buffered_or_visible_old_generation(
         assert len(lab.requests) == 2
         assert "downstream provider" not in str(lab.requests[0][1].content)
         assert "downstream provider" in str(lab.requests[1][1].content)
-        assert lab.memory_calls[-1] == (final["text"], "fast")
+        assert lab.memory_calls[-1] == (final["text"], "deep")
         if visible:
             cancelled = next(
                 i

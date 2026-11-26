@@ -175,7 +175,7 @@ async def test_real_requests_preserve_compound_budget(
             expert = provider.recorded[1][1]
             assert expert.max_tokens == 1200
             assert "<shown_cues>" not in str(expert.content)
-        assert retrieval[0][1] == ("deep" if depth in {"narrative", "expert"} else "fast")
+        assert retrieval[0][1] == "deep"
         assert not any(kind == "AnswerError" for kind, _ in events)
     finally:
         assert await engine.shutdown(within_s=1)
