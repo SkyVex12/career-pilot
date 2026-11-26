@@ -61,7 +61,7 @@ def test_defaults_promote_only_evaluated_topology(clean_config_env, providers):
         assert s.adaptive_expert_route.model_dump() == {
             "model": "gpt-6.2-sol",
             "reasoning": "low",
-            "service_tier": "fast",
+            "service_tier": "ultrafast",
             "retry_tier": "fast",
             "first_token_timeout_ms": 20000,
             "hedge_ms": None,

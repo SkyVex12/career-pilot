@@ -22,6 +22,7 @@ Verified 2026-11-25: https://developers.openai.com/api/docs/guides/prompt-cachin
 """
 
 import re
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
 
 from pydantic import BaseModel, ConfigDict
@@ -54,6 +55,12 @@ DEFAULT_TIERS: dict[str, float] = {
     "priority": 1.75,
     "flex": 0.5,
     "batch": 0.5,
+    # Ultrafast list rates verified 2026-11-26. Settings resolve the temporary
+    # GPT-6.2 promotion, then freeze the rates with each evaluation configuration.
+    **{
+        f"{model}:ultrafast": 6.0
+        for model in ("gpt-6-astra", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra")
+    },
     **{
         f"{model}:{tier}": 2.0
         for model in (
@@ -67,6 +74,19 @@ DEFAULT_TIERS: dict[str, float] = {
         for tier in ("fast", "priority")
     },
 }
+
+
+def default_tiers(at: datetime | None = None) -> dict[str, float]:
+    """Current rates; explicit account rates override these values.
+
+    GPT-6.2 Ultrafast is 3x until March 1, 2027 00:00 Pacific, then 6x.
+    https://developers.openai.com/api/docs/pricing
+    """
+    tiers = dict(DEFAULT_TIERS)
+    if (at or datetime.now(UTC)) < datetime(2027, 3, 1, 8, tzinfo=UTC):
+        tiers.update({"gpt-6.2-sol:ultrafast": 3.0, "gpt-6.2-astra:ultrafast": 3.0})
+    return tiers
+
 
 _PREFIX = re.compile(r"^(?:(?:us|eu|apac|global)\.)?(?:anthropic\.)?")
 _SUFFIX = re.compile(r"(?:-\d{8}|-\d{4}-\d{2}-\d{2})?(?:-v\d+(?::\d+)?)?$")

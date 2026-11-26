@@ -28,7 +28,7 @@ from copilot_core.llm import (
     Route,
 )
 from copilot_core.providers import make_providers, openai_params
-from copilot_gateway.config import Settings
+from copilot_gateway.config import Settings, fastest_deep_tier
 from copilot_gateway.detector import DecisionsRoute
 
 Family = Literal["haiku", "sonnet"]
@@ -92,6 +92,13 @@ def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
             "deep_light": settings.openai_fast_service_tier,
             "deep": settings.openai_deep_service_tier,
         }.get(job)
+        if job == "screen_code":
+            # Resolve the actual screen model; an explicit deep-tier override still wins.
+            tier = (
+                settings.openai_deep_service_tier
+                if "openai_deep_service_tier" in settings.model_fields_set
+                else fastest_deep_tier(settings.screen_code_model or settings.openai_deep_model)
+            )
         if tier is not None:
             params = {**params, "service_tier": tier}
         if job == "screen_code" and settings.screen_code_reasoning is not None:

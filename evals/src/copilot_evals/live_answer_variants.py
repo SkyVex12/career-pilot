@@ -312,7 +312,7 @@ def load_variants(path: Path, settings: Settings, root: Path) -> dict[str, Varia
             options["synthetic_fault"] = SyntheticFault.parse(item["synthetic_fault"])
         for name in ("fast_tier", "expert_tier"):
             value = item.get(name)
-            if value not in (None, "default", "priority", "fast", "flex"):
+            if value not in (None, "default", "priority", "fast", "ultrafast", "flex"):
                 raise ValueError("Unknown variant tier")
             options[name] = value
         for name in ("fast_route_limit", "expert_route_limit"):

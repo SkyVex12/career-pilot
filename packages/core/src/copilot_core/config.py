@@ -13,7 +13,7 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator, model_vali
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from copilot_core.languages import DEFAULT_CALL_LANGUAGES, validate_language
-from copilot_core.pricing import DEFAULT_PRICES, DEFAULT_TIERS, ModelPrice, model_key
+from copilot_core.pricing import DEFAULT_PRICES, ModelPrice, default_tiers, model_key
 
 LLMProviderName = Literal["bedrock", "anthropic", "openai"]
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
@@ -189,7 +189,7 @@ class CoreSettings(BaseSettings):
     # given are merged over the defaults, e.g.
     # {"claude-haiku-4-5": {"input": 1, "cached": 0.1, "output": 5}}.
     model_prices: dict[str, ModelPrice] = Field(default_factory=lambda: dict(DEFAULT_PRICES))
-    tier_price_multipliers: dict[str, float] = Field(default_factory=lambda: dict(DEFAULT_TIERS))
+    tier_price_multipliers: dict[str, float] = Field(default_factory=default_tiers)
 
     # Embeddings for prepared-answer matching, always 1024 dimensions. "auto" uses Bedrock
     # (Cohere) when bedrock is a model provider, else OpenAI when openai is one, and turns
@@ -320,7 +320,7 @@ class CoreSettings(BaseSettings):
     @field_validator("tier_price_multipliers", mode="after")
     @classmethod
     def _merge_tiers(cls, value: dict[str, float]) -> dict[str, float]:
-        return {**DEFAULT_TIERS, **value}
+        return {**default_tiers(), **value}
 
     @field_validator(
         "llm_providers",

@@ -1751,6 +1751,8 @@ async def execute(args: argparse.Namespace) -> None:
         openai_detector_retry_tier=None,
         openai_fast_retry_tier=None,
         openai_deep_retry_tier=None,
+        # Keep baseline conditions stable when deployment defaults change speed tier.
+        openai_deep_service_tier=None,
         **settings_overrides(args),
     )
     rate_identity = None
@@ -2597,7 +2599,7 @@ def main(argv: list[str] | None = None) -> int:
     efforts = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
     parser.add_argument("--fast-reasoning", choices=efforts)
     parser.add_argument("--expert-reasoning", choices=efforts)
-    tiers = ("default", "priority", "fast", "flex")
+    tiers = ("default", "priority", "fast", "ultrafast", "flex")
     parser.add_argument("--fast-tier", choices=tiers)
     parser.add_argument("--expert-tier", choices=tiers)
     parser.add_argument("--timeout", type=float, default=60, help="Overall per-trial deadline")

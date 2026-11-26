@@ -11,6 +11,20 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import NoDecode
 
 from copilot_core.config import CoreSettings, ReasoningEffort, split_list
+from copilot_core.pricing import model_key
+
+
+def fastest_deep_tier(model: str | None) -> Literal["ultrafast"] | None:
+    """Only opt documented models into Ultrafast; unknown models keep their default."""
+    # Verified 2026-11-26: https://developers.openai.com/api/docs/guides/ultrafast-mode
+    if model and model_key(model) in {
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+        "gpt-6.1-sol",
+        "gpt-6-astra",
+    }:
+        return "ultrafast"
+    return None
 
 
 class PreparedThreshold(BaseModel):
@@ -62,8 +76,8 @@ class AdaptiveExpertRoute(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     model: str = Field(strict=True, min_length=1)
     reasoning: ReasoningEffort | None = None
-    service_tier: Literal["default", "priority", "fast", "flex"] | None = None
-    retry_tier: Literal["default", "priority", "fast", "flex"] | None = None
+    service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = None
+    retry_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = None
     first_token_timeout_ms: int | None = Field(default=None, strict=True, gt=0)
     hedge_ms: int | None = Field(default=None, strict=True, gt=0)
 
@@ -87,7 +101,7 @@ def _default_adaptive_expert(values: dict[str, Any]) -> AdaptiveExpertRoute | No
     return AdaptiveExpertRoute(
         model="gpt-6.2-sol",
         reasoning="low",
-        service_tier="fast",
+        service_tier="ultrafast",
         retry_tier="fast",
         first_token_timeout_ms=20000,
         hedge_ms=None,
@@ -162,10 +176,14 @@ class Settings(CoreSettings):
     # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
     fast_hedge_ms: int | None = 1200
     openai_fast_retry_tier: str | None = "priority"
-    # Optional primary tiers for live answer routes. None preserves the provider default;
-    # retry tiers remain independent. Screen and background jobs keep their own settings.
-    openai_fast_service_tier: Literal["default", "priority", "fast", "flex"] | None = None
-    openai_deep_service_tier: Literal["default", "priority", "fast", "flex"] | None = None
+    # Supported deep models use Ultrafast. Explicit None preserves the provider default;
+    # retry tiers remain independent so capacity/access failures can fall back to Fast.
+    openai_fast_service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = (
+        None
+    )
+    openai_deep_service_tier: Literal["default", "priority", "fast", "ultrafast", "flex"] | None = (
+        Field(default_factory=lambda data: fastest_deep_tier(data.get("openai_deep_model")))
+    )
     # The same for the deep pass. In the 2026-10-29 interviews 7 deep passes got no first token
     # within their timeout and retried on the same model and tier: their first words came at
     # 9.7 to 11 s instead of about 4 s (two more were lost in a runaway session). Its first
