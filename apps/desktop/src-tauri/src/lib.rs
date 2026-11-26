@@ -13,6 +13,8 @@ mod event_delivery;
 mod history;
 mod hotkeys;
 mod layout;
+#[cfg(windows)]
+mod native_helpers;
 mod native_screen;
 mod program_name;
 mod release;
@@ -2261,6 +2263,8 @@ pub fn run() {
     let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         background::second_instance(app, &args);
     }));
+    #[cfg(windows)]
+    let builder = builder.plugin(native_helpers::init());
     #[cfg(feature = "release")]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
