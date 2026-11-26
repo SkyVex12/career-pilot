@@ -2,7 +2,8 @@
 //!
 //! Both channels send only speech. When speech starts, the 200 ms before it (the pre-roll) and
 //! the audio up to the start decision go out at once with the start flag on the first frame,
-//! in chunks of at most 1 s; then 100 ms frames in real time; when speech ends, the rest of
+//! in chunks of at most 1 s; then configured 20, 40 or 100 ms frames (100 ms by default);
+//! when speech ends, the rest of
 //! the audio and an empty frame with the end flag. This is `schedule()` in
 //! evals/src/copilot_evals/replay.py, done live.
 //!
@@ -17,7 +18,7 @@ use copilot_protocol::audio::{CHANNEL_ME, CHANNEL_THEM};
 use copilot_protocol::audio::{FLAG_SPEECH_END, FLAG_SPEECH_START};
 
 use super::vad::VadEvent;
-use super::{FRAME_SAMPLES, OutFrame, SAMPLE_RATE, samples_to_ms};
+use super::{FrameDuration, OutFrame, SAMPLE_RATE, samples_to_ms};
 
 pub const PREROLL_MS: u32 = 200;
 const BURST_MAX: usize = SAMPLE_RATE as usize; // 1 s per frame keeps frames far under 64 KB
@@ -32,18 +33,25 @@ pub struct SpeechFramer {
     pos: Option<u64>,
     prev_end: u64,
     preroll: u64,
+    frame_samples: usize,
 }
 
 impl SpeechFramer {
     /// `channel` is the wire channel (`CHANNEL_THEM` or `CHANNEL_ME`).
     pub fn new(channel: u8) -> Self {
+        Self::with_frame_duration(channel, FrameDuration::default())
+    }
+
+    pub fn with_frame_duration(channel: u8, duration: FrameDuration) -> Self {
+        let frame_samples = duration.samples();
         Self {
             channel,
-            history: VecDeque::with_capacity(HISTORY + FRAME_SAMPLES),
+            history: VecDeque::with_capacity(HISTORY + frame_samples),
             history_start: 0,
             pos: None,
             prev_end: 0,
             preroll: u64::from(PREROLL_MS) * u64::from(SAMPLE_RATE) / 1000,
+            frame_samples,
         }
     }
 
@@ -97,9 +105,9 @@ impl SpeechFramer {
             }
         }
         if let Some(mut pos) = self.pos {
-            while pos + FRAME_SAMPLES as u64 <= self.end() {
-                out.push(self.frame(0, pos, self.slice(pos, pos + FRAME_SAMPLES as u64)));
-                pos += FRAME_SAMPLES as u64;
+            while pos + self.frame_samples as u64 <= self.end() {
+                out.push(self.frame(0, pos, self.slice(pos, pos + self.frame_samples as u64)));
+                pos += self.frame_samples as u64;
             }
             self.pos = Some(pos);
         }
@@ -120,6 +128,7 @@ impl SpeechFramer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::FRAME_SAMPLES;
 
     /// Samples whose value is their position, so a frame's audio shows where it came from.
     fn ramp(from: u64, n: usize) -> Vec<i16> {

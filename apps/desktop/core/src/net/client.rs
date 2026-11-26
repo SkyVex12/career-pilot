@@ -742,7 +742,14 @@ pub(crate) async fn connect(url: &str, token: &Token) -> Result<Ws, String> {
     let mut request = url.into_client_request().map_err(|e| e.to_string())?;
     let auth = HeaderValue::from_str(&format!("Bearer {}", token.access_token)).map_err(|e| e.to_string())?;
     request.headers_mut().insert("Authorization", auth);
-    match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request)).await {
+    // Speech/control frames are latency-sensitive. Set TCP_NODELAY on the underlying socket
+    // through the supported connector, before either the WS or WSS handshake.
+    match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(request, None, true),
+    )
+    .await
+    {
         Ok(Ok((ws, _))) => Ok(ws),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("timed out".into()),
@@ -816,6 +823,41 @@ mod tests {
     use copilot_protocol::audio::{FLAG_SPEECH_END, FLAG_SPEECH_START};
 
     use super::*;
+
+    #[tokio::test]
+    async fn connector_disables_nagle_and_preserves_auth_and_binary_payload() {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let peer = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let mut ws = tokio_tungstenite::accept_hdr_async(
+                    socket,
+                    |request: &tokio_tungstenite::tungstenite::handshake::server::Request, response| {
+                        assert_eq!(request.headers()["Authorization"], "Bearer socket-option-test");
+                        Ok(response)
+                    },
+                )
+                .await
+                .unwrap();
+                let payload = ws.next().await.unwrap().unwrap();
+                assert_eq!(payload, Message::binary(vec![1, 2, 3, 4]));
+                ws.send(payload).await.unwrap();
+                assert!(matches!(ws.next().await, Some(Ok(Message::Close(_)))));
+                ws.flush().await.unwrap();
+            });
+            let token = Token { access_token: "socket-option-test".into(), expires_at: None };
+            let mut ws = connect(&format!("ws://{address}/session"), &token).await.unwrap();
+            let MaybeTlsStream::Plain(socket) = ws.get_ref() else { panic!("local WS must be plain") };
+            assert!(socket.nodelay().unwrap());
+            ws.send(Message::binary(vec![1, 2, 3, 4])).await.unwrap();
+            assert_eq!(ws.next().await.unwrap().unwrap(), Message::binary(vec![1, 2, 3, 4]));
+            ws.close(None).await.unwrap();
+            peer.await.unwrap();
+        })
+        .await
+        .expect("local connector test exceeded its bound");
+    }
 
     fn frame(channel: u8, flags: u8) -> OutFrame {
         OutFrame { channel, flags, capture_ms: 100, audio: vec![7; 1_600] }
