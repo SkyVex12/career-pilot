@@ -80,6 +80,15 @@ def ready_detection(session: Any, q: Question, original: str) -> Detection | Non
 @dataclass
 class RoutingLab:
     variant: str
+    question_text: str = QUESTION
+    detection_type: str = "technical"
+    architecture: str = "adaptive"
+    hold_before_request: bool = False
+    request_gate_entered: asyncio.Event = field(default_factory=asyncio.Event)
+    request_gate_release: asyncio.Event = field(default_factory=asyncio.Event)
+    expert_entered: asyncio.Event = field(default_factory=asyncio.Event)
+    expert_release: asyncio.Event = field(default_factory=asyncio.Event)
+    closed_models: list[str] = field(default_factory=list)
     memory_entered: asyncio.Event = field(default_factory=asyncio.Event)
     memory_release: asyncio.Event = field(default_factory=asyncio.Event)
     cache_entered: asyncio.Event = field(default_factory=asyncio.Event)
@@ -97,6 +106,13 @@ class RoutingLab:
     selections: list[dict[str, Any]] = field(default_factory=list)
     timeline: list[str] = field(default_factory=list)
     session: Any = None
+
+    async def before_request(self, pass_: str) -> None:
+        if pass_ == "fast":
+            self.timeline.append("request_gate_entered")
+            self.request_gate_entered.set()
+            if self.hold_before_request:
+                await self.request_gate_release.wait()
 
     def replan(self, engine: AnswerEngine, q: Question, pass_: str, plan: AnswerPlan) -> AnswerPlan:
         self.timeline.append("pre_request")
@@ -144,6 +160,7 @@ def experimental_engine(lab: RoutingLab) -> type[AnswerEngine]:
     )
     source = source.replace(
         anchor,
+        "            await self._routing_lab.before_request(pass_)\n"
         "            plan = self._routing_lab.replan(self, q, pass_, plan)\n"
         "            q.plans[pass_] = plan\n" + anchor,
     )
@@ -179,7 +196,11 @@ class RoutingProvider(ScriptedProvider):
         return Decided(
             [
                 {"type": "choice", "name": name, "choice": value, "confidence": 0.99}
-                for name, value in (("turn", "answer"), ("type", "technical"), ("depth", "deep"))
+                for name, value in (
+                    ("turn", "answer"),
+                    ("type", lab.detection_type),
+                    ("depth", "deep"),
+                )
             ],
             LLMUsage(10, cache_write_tokens=0, reasoning_tokens=0),
             "openai",
@@ -192,20 +213,41 @@ class RoutingProvider(ScriptedProvider):
         lab = self.lab
         lab.requests.append((model, req))
         lab.timeline.append("provider_dispatched")
-        lab.provider_entered.set()
-        await lab.provider_release.wait()
-        yield "Use a durable operation key to make retries idempotent. "
-        yield LLMDone(
-            LLMUsage(10, 0, 12, cache_write_tokens=0, reasoning_tokens=0),
-            "end_turn",
-            self.name,
-            model,
-        )
+        expert = lab.architecture == "adaptive_hybrid" and model == "fixture-deep"
+        (lab.expert_entered if expert else lab.provider_entered).set()
+        try:
+            await (lab.expert_release if expert else lab.provider_release).wait()
+            yield "Use a durable operation key to make retries idempotent. "
+            yield LLMDone(
+                LLMUsage(10, 0, 12, cache_write_tokens=0, reasoning_tokens=0),
+                "end_turn",
+                self.name,
+                model,
+            )
+        finally:
+            lab.closed_models.append(model)
 
 
 @asynccontextmanager
-async def live_lab(env, monkeypatch, variant, architecture="adaptive", **preferences):
-    lab = RoutingLab(variant)
+async def live_lab(
+    env,
+    monkeypatch,
+    variant,
+    architecture="adaptive",
+    *,
+    question_text=QUESTION,
+    detection_type="technical",
+    automatic_expert=False,
+    hold_before_request=False,
+    **preferences,
+):
+    lab = RoutingLab(
+        variant,
+        question_text=question_text,
+        detection_type=detection_type,
+        architecture=architecture,
+        hold_before_request=hold_before_request,
+    )
     monkeypatch.setattr(session_module, "AnswerEngine", experimental_engine(lab))
 
     async def memory(self, text, pass_):
@@ -243,7 +285,7 @@ async def live_lab(env, monkeypatch, variant, architecture="adaptive", **prefere
         fast_hedge_ms=None,
         deep_hedge_ms=None,
         prewarm_jobs=[],
-        deep_pass_auto=False,
+        deep_pass_auto=automatic_expert,
     )
     async with GatewayServer(env.services(settings)) as gateway:
         client = ProtocolClient(gateway.url)
@@ -257,13 +299,15 @@ async def live_lab(env, monkeypatch, variant, architecture="adaptive", **prefere
                 lab.cache_release,
                 lab.detector_release,
                 lab.provider_release,
+                lab.expert_release,
+                lab.request_gate_release,
             ):
                 gate.set()
             await client.close()
 
 
 async def start_partial(lab, client):
-    await client.frame(0, 0b01, text_frame_audio(QUESTION), 0)
+    await client.frame(0, 0b01, text_frame_audio(lab.question_text), 0)
     await asyncio.wait_for(lab.memory_entered.wait(), 2)
     await asyncio.wait_for(lab.detector_entered.wait(), 2)
     q = next(iter(lab.session.answers.questions.values()))
@@ -547,3 +591,195 @@ async def test_completed_future_lookup_rejects_unknown_or_unrelated_routing(case
     elif case == "discarded":
         q.discarded = True
     assert ready_detection(session, cast(Question, q), QUESTION) is None
+
+
+WORK_QUESTION = "How does Boreal retry delivery?"
+
+
+async def complete_existing_detector(lab):
+    early = lab.session.turns.early
+    assert early is not None
+    future = early.cand.detection
+    lab.detector_release.set()
+    await asyncio.wait_for(asyncio.shield(future), 2)
+    assert future.result().qtype == "how_it_works"
+    assert future.result().depth == "deep"
+
+
+async def confirm_existing_question(lab, client, q):
+    await client.frame(0, 0b10, b"", 100)
+    detected = await client.wait_type(
+        "question.detected", question_id=str(q.qid), speculative=False
+    )
+    assert detected["question_id"] == str(q.qid)
+    assert lab.session.answers.questions[q.qid] is q
+    assert q.qtype == "how_it_works"
+    assert q.depth == "deep"
+
+
+@pytest.mark.parametrize("architecture", ["adaptive", "adaptive_hybrid", "adaptive_on_demand"])
+@pytest.mark.parametrize("variant", VARIANTS)
+@pytest.mark.parametrize(
+    "arrival",
+    ["before_retrieval_completion", "before_request_construction", "after_dispatch"],
+)
+async def test_workplace_late_route_keeps_primary_and_hybrid_contract(
+    env, monkeypatch, architecture, variant, arrival
+):
+    """No provider/model timing claim: gates establish the three exact causal orders."""
+    async with live_lab(
+        env,
+        monkeypatch,
+        variant,
+        architecture,
+        question_text=WORK_QUESTION,
+        detection_type="how_it_works",
+        automatic_expert=True,
+        hold_before_request=True,
+        mode="standup",
+    ) as (lab, client):
+        lab.session.call_context = lambda: prompts.CallContext(recent="Frozen Boreal context.")
+        q = await start_partial(lab, client)
+        original_task = q.tasks["fast"]
+        assert lab.memory_calls == [(WORK_QUESTION, "fast")]
+        lab.session.call_context = lambda: prompts.CallContext(
+            recent="Later unrelated Atlas context."
+        )
+        lab.cache_release.set()
+
+        if arrival == "before_retrieval_completion":
+            await complete_existing_detector(lab)
+            assert q.held
+            assert q.depth is None
+            assert "memory_completed" not in lab.timeline
+            lab.memory_release.set()
+            lab.request_gate_release.set()
+        elif arrival == "before_request_construction":
+            lab.memory_release.set()
+            await asyncio.wait_for(lab.request_gate_entered.wait(), 2)
+            assert "memory_completed" in lab.timeline
+            assert not lab.provider_entered.is_set()
+            await complete_existing_detector(lab)
+            await confirm_existing_question(lab, client, q)
+            # A hybrid may start the independent expert before this primary dispatch.
+            if architecture == "adaptive_hybrid":
+                await asyncio.wait_for(lab.expert_entered.wait(), 2)
+                assert not lab.provider_entered.is_set()
+            lab.request_gate_release.set()
+        else:
+            lab.memory_release.set()
+            lab.request_gate_release.set()
+
+        await asyncio.wait_for(lab.provider_entered.wait(), 2)
+        upgraded = (arrival == "before_retrieval_completion" and variant == "ready") or (
+            arrival == "before_request_construction" and variant != "frozen"
+        )
+        expected = (
+            plan_answer(WORK_QUESTION, "how_it_works", "deep", architecture)
+            if upgraded
+            else AnswerPlan("standard", "fast", 400)
+        )
+        assert q.plans["fast"] == expected
+        primary = [
+            (model, req)
+            for model, req in lab.requests
+            if architecture != "adaptive_hybrid" or model != "fixture-deep"
+        ]
+        assert len(primary) == 1
+        model, request = primary[0]
+        assert model == lab.session.settings.openai_route(expected.job)[0]
+        assert request.max_tokens == expected.max_tokens
+        assert EVIDENCE in str(request.content)
+        assert WORK_QUESTION in str(request.content)
+        assert "Frozen Boreal context" in str(request.content)
+        assert "Later unrelated Atlas context" not in str(request.content)
+        assert q.tasks["fast"] is original_task
+        assert not client.of_type("answer.delta")
+        if arrival == "after_dispatch":
+            assert "detector_completed" not in lab.timeline
+            await complete_existing_detector(lab)
+        if arrival != "before_request_construction":
+            await confirm_existing_question(lab, client, q)
+
+        if architecture == "adaptive_hybrid":
+            await asyncio.wait_for(lab.expert_entered.wait(), 2)
+            assert not q.fast_ended
+            assert not original_task.done()
+            assert len(lab.requests) == 2
+            expert = next(req for model, req in lab.requests if model == "fixture-deep")
+            assert expert.max_tokens == 1200
+            assert WORK_QUESTION in str(expert.content)
+            assert EVIDENCE in str(expert.content)
+            assert "Use a durable operation key to make retries idempotent." not in str(
+                expert.content
+            )
+            lab.expert_release.set()
+            await client.wait_type("answer.done", question_id=str(q.qid), pass_="deep")
+            assert not q.fast_ended
+        else:
+            assert len(lab.requests) == 1
+            assert not lab.expert_entered.is_set()
+
+        lab.provider_release.set()
+        await client.wait_type("answer.done", question_id=str(q.qid), pass_="fast")
+        await lab.session.answers.wait_idle()
+        await asyncio.gather(*lab.session.answers._background)
+        assert lab.decisions == [WORK_QUESTION]
+        assert lab.memory_calls == (
+            [(WORK_QUESTION, "fast"), (WORK_QUESTION, "deep")]
+            if architecture == "adaptive_hybrid"
+            else [(WORK_QUESTION, "fast")]
+        )  # The primary keeps its original evidence lookup, even when routing upgrades.
+        assert len(lab.requests) == (2 if architecture == "adaptive_hybrid" else 1)
+        assert q.delta_counts == (
+            {"deep": 1, "fast": 1} if architecture == "adaptive_hybrid" else {"fast": 1}
+        )
+        assert {m["question_id"] for m in client.of_type("answer.delta")} == {str(q.qid)}
+        assert all(m["sequence"] == 0 for m in client.of_type("answer.delta"))
+        assert q.tasks["fast"] is original_task
+        assert len(lab.closed_models) == len(lab.requests)
+
+
+@pytest.mark.parametrize("action", ["discard", "cancel", "supersede"])
+@pytest.mark.parametrize("phase", ["before_request", "after_confirmation"])
+async def test_workplace_hybrid_cancellation_owns_primary_and_expert(
+    env, monkeypatch, action, phase
+):
+    async with live_lab(
+        env,
+        monkeypatch,
+        "ready",
+        "adaptive_hybrid",
+        question_text=WORK_QUESTION,
+        detection_type="how_it_works",
+        automatic_expert=True,
+        hold_before_request=True,
+        mode="standup",
+    ) as (lab, client):
+        q = await start_partial(lab, client)
+        await complete_existing_detector(lab)
+        lab.cache_release.set()
+        lab.memory_release.set()
+        await asyncio.wait_for(lab.request_gate_entered.wait(), 2)
+        if phase == "after_confirmation":
+            lab.request_gate_release.set()
+            await asyncio.wait_for(lab.provider_entered.wait(), 2)
+            await confirm_existing_question(lab, client, q)
+            await asyncio.wait_for(lab.expert_entered.wait(), 2)
+            assert len(lab.requests) == 2
+        else:
+            assert q.held
+            assert not lab.requests
+        if action == "discard":
+            lab.session.answers.discard(q.qid)
+        elif action == "cancel":
+            lab.session.answers.cancel_speculative(q.qid)
+        else:
+            lab.session.answers.supersede(keep=None)
+        await lab.session.answers.wait_idle()
+        assert all(task.done() for task in q.tasks.values())
+        assert len(lab.requests) == (2 if phase == "after_confirmation" else 0)
+        assert len(lab.closed_models) == len(lab.requests)
+        assert not client.of_type("answer.delta")
+        assert not client.of_type("answer.done")
+        assert lab.decisions == [WORK_QUESTION]

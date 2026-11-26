@@ -54,8 +54,6 @@ def plan_answer(
     """Choose a bounded answer, without interpreting a generated answer as evidence."""
     if expert:
         return AnswerPlan("expert", "deep", 1200)
-    if _BRIEF.search(text) and len(text.split()) < 20 and text.count("?") <= 1:
-        return AnswerPlan("brief", "fast", 100)
     needs_expert = qtype in {"system_design", "coding"} or bool(_DESIGN.search(text))
     needs_expert |= detector_depth == "deep" and qtype in {
         "technical",
@@ -73,11 +71,16 @@ def plan_answer(
             1200 if architecture == "adaptive" else 650,
             auto_expert=architecture == "adaptive_hybrid",
         )
+    # A short opening must not hide a harder request in the same question.
+    if _STORY.search(text):
+        return AnswerPlan("narrative", "fast", 600)
+    if _BRIEF.search(text) and len(text.split()) < 20 and text.count("?") <= 1:
+        return AnswerPlan("brief", "fast", 100)
     if qtype == "small_talk" or (
         qtype == "respond" and len(text.split()) <= 16 and detector_depth != "deep"
     ):
         return AnswerPlan("brief", "fast", 100)
-    if qtype == "behavioral" or _STORY.search(text):
+    if qtype == "behavioral":
         return AnswerPlan("narrative", "fast", 600)
     return AnswerPlan("standard", "fast", 400)
 
