@@ -440,6 +440,28 @@ def scenarios(cycles: int = 8) -> list[dict[str, Any]]:
     return [
         *[
             {
+                "id": f"stable-{category}-{lead_ms}",
+                "actions": [
+                    {
+                        "op": "partial",
+                        "text": question,
+                        "final_text": question + "?",
+                        "start": True,
+                    },
+                    {"op": "pause", "seconds": lead_ms / 1000},
+                    {"op": "end"},
+                    {"op": "settle"},
+                ],
+            }
+            for category, question in (
+                ("easy", "Which programming languages do you use most often"),
+                ("design", design.rstrip("?")),
+                ("intro", "Tell me about yourself and your backend experience"),
+            )
+            for lead_ms in (100, 600, 1000)
+        ],
+        *[
+            {
                 "id": identifier,
                 "actions": [
                     {"op": "partial", "text": question, "start": True},
@@ -718,12 +740,21 @@ def timing_rows(
                 and message["text"] in (item.get("text"), item.get("final_text"))
             ]
             origin = matches[-1]["at_ms"] if matches else None
+            ends = [
+                item["at_ms"]
+                for item in injected
+                if item.get("op") == "end"
+                and item.get("speaker") != "me"
+                and origin is not None
+                and origin <= item["at_ms"] <= at
+            ]
             questions.setdefault(
                 qid,
                 {
                     "question_id": qid,
                     "text": message["text"],
                     "injected_at_ms": origin,
+                    "end_frame_at_ms": ends[0] if ends else None,
                     "detected_at_ms": at,
                     "first_delta_at_ms": None,
                     "first_sentence_boundary_at_ms": None,
@@ -753,6 +784,10 @@ def timing_rows(
             row[field + "_from_text_ms"] = (
                 at - origin if at is not None and origin is not None else None
             )
+            end = row["end_frame_at_ms"]
+            row[field + "_from_end_frame_ms"] = (
+                at - end if at is not None and end is not None else None
+            )
     return list(questions.values())
 
 
@@ -773,6 +808,9 @@ def latency_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                     "first_delta_from_text_ms",
                     "first_sentence_boundary_from_text_ms",
                     "complete_from_text_ms",
+                    "first_delta_from_end_frame_ms",
+                    "first_sentence_boundary_from_end_frame_ms",
+                    "complete_from_end_frame_ms",
                 )
             }
             for scenario in sorted({result["id"] for result in results})
@@ -904,6 +942,13 @@ async def replay_session(
                         )
                         capture_ms += 100
                         if op == "say":
+                            injected.append(
+                                {
+                                    "op": "end",
+                                    "speaker": speaker,
+                                    "at_ms": round((time.monotonic() - started) * 1000),
+                                }
+                            )
                             await protocol.frame(channel, 2, b"", capture_ms)
                             capture_ms += 6000
                     elif op == "wait_started":
@@ -916,6 +961,13 @@ async def replay_session(
                             }
                         )
                     elif op == "end":
+                        injected.append(
+                            {
+                                "op": "end",
+                                "speaker": "them",
+                                "at_ms": round((time.monotonic() - started) * 1000),
+                            }
+                        )
                         await protocol.frame(0, 2, b"", capture_ms)
                         capture_ms += 6000
                     elif op == "wait":
@@ -992,6 +1044,9 @@ async def replay_session(
                     "held_discarded",
                     "speculative_cancels",
                     "early_starts",
+                    "early_used",
+                    "stable_early_starts",
+                    "early_final_releases",
                 )
             }
         confirmed = {
@@ -1116,6 +1171,33 @@ def replay_settings(live: bool, strategy: str) -> Settings:
     return settings.model_copy(update=overrides)
 
 
+TURN_EXPERIMENTS = {
+    "baseline": {"early_stable_partial_ms": None, "early_final_release": False},
+    "stable": {"early_stable_partial_ms": 250, "early_final_release": False},
+    "final": {"early_stable_partial_ms": None, "early_final_release": True},
+    "combined": {"early_stable_partial_ms": 250, "early_final_release": True},
+}
+
+
+def session_variants(args: argparse.Namespace) -> dict[str, Settings]:
+    experiments = getattr(args, "turn_experiments", None)
+    if experiments and (
+        len(set(experiments)) != len(experiments) or set(experiments) - TURN_EXPERIMENTS.keys()
+    ):
+        raise ValueError("Select distinct known turn experiments")
+    result: dict[str, Settings] = {}
+    for architecture in args.architectures:
+        settings = replay_settings(args.live, STRATEGIES[architecture])
+        if not experiments:
+            result[architecture] = settings
+        else:
+            for experiment in experiments:
+                result[f"{architecture}:{experiment}"] = settings.model_copy(
+                    update=TURN_EXPERIMENTS[experiment]
+                )
+    return result
+
+
 async def execute(args: argparse.Namespace) -> dict[str, Any]:
     if not (
         1 <= args.reps <= 100
@@ -1164,7 +1246,12 @@ async def execute_owned(
         raise ValueError("Unknown or empty scenario selection")
     if not args.architectures or len(set(args.architectures)) != len(args.architectures):
         raise ValueError("Select distinct architectures")
-    settings = replay_settings(args.live, STRATEGIES[args.architectures[0]])
+    variants = session_variants(args)
+    strategies = {
+        label: setting.answer_architecture + (":" + label.split(":", 1)[1] if ":" in label else "")
+        for label, setting in variants.items()
+    }
+    settings = next(iter(variants.values()))
     identity = experiment_identity(
         chosen, settings, args.reps, args.seed, args.concurrency, args.timeout
     )
@@ -1173,7 +1260,11 @@ async def execute_owned(
         origin="individual text frame injection",
         live=args.live,
         max_inflight=args.max_inflight,
-        strategies={k: STRATEGIES[k] for k in args.architectures},
+        strategies=strategies,
+        turn_experiments={
+            label: setting.model_dump(include={"early_stable_partial_ms", "early_final_release"})
+            for label, setting in variants.items()
+        },
         budget_limit_usd=args.max_cost,
         currency_cutoff_disabled=args.max_cost is None,
         connectivity_check=not args.skip_connectivity_check,
@@ -1272,7 +1363,7 @@ async def execute_owned(
     )
     schedule = [
         item
-        for block in case_blocks(chosen, args.architectures, args.reps, args.seed)
+        for block in case_blocks(chosen, list(variants), args.reps, args.seed)
         for item in block
     ]
     scheduled: list[dict[str, Any]] = [
@@ -1280,7 +1371,7 @@ async def execute_owned(
             "scenario": scenario["id"],
             "architecture": label,
             "rep": rep,
-            "trial_id": f"{scenario['id']}:{STRATEGIES[label]}:{rep}",
+            "trial_id": f"{scenario['id']}:{strategies[label]}:{rep}",
         }
         for scenario, label, rep in schedule
     ]
@@ -1431,7 +1522,7 @@ async def execute_owned(
         nonlocal aborting
         async with semaphore:
             try:
-                trial = f"{scenario['id']}:{STRATEGIES[label]}:{rep}"
+                trial = f"{scenario['id']}:{strategies[label]}:{rep}"
                 if (
                     aborting
                     or budget.blocked
@@ -1445,13 +1536,15 @@ async def execute_owned(
                 started_trials.append(trial)
                 result = await replay_session(
                     scenario,
-                    replay_settings(args.live, STRATEGIES[label]),
+                    variants[label],
                     providers,
                     trial_id=trial,
                     timeout_s=args.timeout,
                     attempt_events=attempts,
                     attempt_store=store,
                 )
+                result["answer_architecture"] = result["architecture"]
+                result["architecture"] = strategies[label]
                 result["rep"] = rep
                 trial_requests = [r for r in requests if r["trial_id"] == trial]
                 # Storage failure is local instrumentation, not a model/network failure.
@@ -1565,6 +1658,7 @@ def run() -> None:
     parser.add_argument("--live", action="store_true")
     parser.add_argument("--architectures", choices=list(STRATEGIES), nargs="+", default=["A", "D"])
     parser.add_argument("--scenarios", nargs="+")
+    parser.add_argument("--turn-experiments", choices=list(TURN_EXPERIMENTS), nargs="+")
     parser.add_argument("--reps", type=int, default=1)
     parser.add_argument("--cycles", type=int, default=8)
     parser.add_argument("--concurrency", type=int, default=2)

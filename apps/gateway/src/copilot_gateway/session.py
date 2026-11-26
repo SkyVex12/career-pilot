@@ -364,6 +364,8 @@ class Session:
             keep_added_words=self.settings.held_keep_added_words,
             strict_extensions=self.settings.answer_architecture != "legacy_dual",
             early_all_modes=self.settings.early_decision_all_modes,
+            early_stable_partial_ms=self.settings.early_stable_partial_ms,
+            early_final_release=self.settings.early_final_release,
         )
         self.answers = AnswerEngine(self)
         self._automatic_questions: OrderedDict[UUID, AutomaticQuestion] = OrderedDict()

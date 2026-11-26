@@ -133,6 +133,12 @@ class Settings(CoreSettings):
     early_decision_interval_ms: int | None = 700
     # The early decision in interviews too, not only standups and meetings (2026-11-16).
     early_decision_all_modes: bool = True
+    # Experimental hidden drafts from unchanged, unpunctuated question partials.
+    # Keep disabled until speech replays establish accuracy and cancellation overhead.
+    early_stable_partial_ms: int | None = Field(default=None, ge=100, le=2000)
+    # Reused early work with a positive detector decision and matching final transcript
+    # may bypass the display floor; confirmation and interruption rules still apply.
+    early_final_release: bool = False
     # Keep a held fast pass when the STT final only adds this many words at the end of the
     # text it started on; only the detector decides again (turn.py, "Kept on a longer final").
     # The final changed the words of 105 of 141 utterances in October's benchmark runs, and

@@ -479,6 +479,7 @@ class _Turn:
     cand: _Candidate | None = None  # the text being decided, with its detector call
     taken: bool = False  # a forced question took the held pass and the detector call over
     early: "_Early | None" = None  # step 1 started on this text before the speech end
+    early_text: str | None = None  # candidate adopted from before this speech end
     first_qid: UUID | None = None  # shown before the detector decided (plain_question)
 
 
@@ -510,6 +511,8 @@ class TurnDetector:
         keep_added_words: int | None = None,
         strict_extensions: bool = False,
         early_all_modes: bool = False,
+        early_stable_partial_ms: int | None = None,
+        early_final_release: bool = False,
         spoken_language: str = "en",
     ) -> None:
         self.host = host
@@ -543,6 +546,12 @@ class TurnDetector:
         self.strict_extensions = strict_extensions
         # Early decision in every call, not only group calls.
         self.early_all_modes = early_all_modes
+        self.early_stable_s = (
+            early_stable_partial_ms / 1000 if early_stable_partial_ms is not None else None
+        )
+        self.early_final_release = early_final_release
+        self._stable_timer: asyncio.TimerHandle | None = None
+        self._stable_text: str | None = None
         self.speaking = False
         self.early: _Early | None = None
         self.early_at = 0.0
@@ -562,6 +571,8 @@ class TurnDetector:
         self.detached_turns = 0
         self.early_starts = 0
         self.early_used = 0
+        self.stable_early_starts = 0
+        self.early_final_releases = 0
         self.carried = 0
         self.first_shown = 0
         self.first_withdrawn = 0
@@ -572,6 +583,7 @@ class TurnDetector:
         return " ".join([*self.finals, self.interim]).strip()
 
     def reset(self) -> None:
+        self._cancel_stable()
         self.finals.clear()
         self.interim = ""
 
@@ -600,12 +612,51 @@ class TurnDetector:
             or text[-1] not in ".?!\u3002\uff1f\uff01\u061f"
             or speech_units(text, self.spoken_language) < self.hold_min_words
         ):
+            self._schedule_stable(text)
             return
+        self._cancel_stable()
+        self._start_early(text)
+
+    def _cancel_stable(self) -> None:
+        if self._stable_timer is not None:
+            self._stable_timer.cancel()
+        self._stable_timer = None
+        self._stable_text = None
+
+    def _schedule_stable(self, text: str) -> None:
+        # Hidden work only: the detector, final reconciliation and cancellation still
+        # decide whether anything may be shown. Repeated identical interims keep the timer.
+        if self.early_stable_s is None or not likely_question(
+            text, max(6, self.hold_min_words), self.spoken_language
+        ):
+            self._cancel_stable()
+            return
+        if text == self._stable_text and self._stable_timer is not None:
+            return
+        self._cancel_stable()
+        self._stable_text = text
+        delay = max(
+            self.early_stable_s,
+            self.early_at + (self.early_s or 0) - time.monotonic(),
+        )
+        self._stable_timer = asyncio.get_running_loop().call_later(
+            delay, self._on_stable_partial, text
+        )
+
+    def _on_stable_partial(self, text: str) -> None:
+        self._stable_timer = None
+        self._stable_text = None
+        if self.speaking and self.utterance() == text and self._start_early(text):
+            self.stable_early_starts += 1
+
+    def _start_early(self, text: str) -> bool:
+        if self.early_s is None:
+            return False
         if self.early is not None and not materially_changed(self.early.cand.text, text):
-            return
+            return False
         now = time.monotonic()
         if now - self.early_at < self.early_s:
-            return
+            return False
         self._drop_early()
 
         self.early_at = now
@@ -618,6 +669,7 @@ class TurnDetector:
             self.held_starts += 1
             held = self.host.start_held(text, now, match)
         self.early = _Early(_Candidate(text, detection, match), held, now)
+        return True
 
     async def change_language(self, language: str) -> None:
         """Finish cancellation before a new recognition generation can deliver text."""
@@ -650,6 +702,7 @@ class TurnDetector:
             self.host.discard_question(early.held)
 
     def on_speech_start(self) -> None:
+        self._cancel_stable()
         self.speaking = True
         if self.carry_until is not None and time.monotonic() > self.carry_until:
             self.drop_carry()  # the speaker took too long: that sentence stays unfinished
@@ -688,6 +741,7 @@ class TurnDetector:
         task.cancel()  # step 3; the task sends question.cancelled if needed
 
     def on_speech_end(self) -> None:
+        self._cancel_stable()
         self._interrupt()
         self.speaking = False
         self.text_arrived.clear()
@@ -696,6 +750,7 @@ class TurnDetector:
         self.task = asyncio.create_task(self._turn(self.turn))
 
     def cancel(self) -> None:
+        self._cancel_stable()
         for task in (self.task, *self._detached):
             if task is not None and not task.done():
                 task.cancel()
@@ -763,6 +818,24 @@ class TurnDetector:
             return
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(turn.flushed.wait(), max(0.0, deadline - time.monotonic()))
+
+    async def _wait_release(self, turn: _Turn) -> None:
+        deadline = turn.t0 + self.speculative_s
+        if (
+            self.early_final_release
+            and turn.early_text is not None
+            and turn.held_qid is not None
+            and turn.cand is not None
+            and turn.cand.detection.done()
+            and turn.cand.detection.result().fires()
+            and not turn.cand.detection.result().error
+        ):
+            await self._wait_final(turn, deadline)
+            if turn.flushed.is_set() and _words(turn.early_text) == _words(self._text(turn)):
+                if time.monotonic() < deadline:
+                    self.early_final_releases += 1
+                return
+        await self._sleep_until(deadline)
 
     async def _turn_end(self, turn: _Turn) -> None:
         """Step 4's condition: the silence timer (or the turn model), then the STT final."""
@@ -985,6 +1058,7 @@ class TurnDetector:
         try:
             if early is not None:
                 cand = self._adopt(turn, early)
+                turn.early_text = early.cand.text
                 if early_longer:
                     cand.detection.cancel()
                     cand = self._redetect(turn, self.utterance(), cand.match)
@@ -1017,8 +1091,10 @@ class TurnDetector:
                     if detection.decision != "wait" or not self._carry(turn):
                         self._done(turn)
                     return
-                await self._sleep_until(t0 + self.speculative_s)
-                if self._changed(turn, cand) and not self._extends(cand.text, self._text(turn)):
+                await self._wait_release(turn)
+                if self._changed(turn, cand) and (
+                    self.early_final_release or not self._extends(cand.text, self._text(turn))
+                ):
                     self._withdraw_shown(turn)
                     continue
                 qid: UUID | None = turn.first_qid

@@ -612,3 +612,44 @@ async def test_successful_detector_cannot_mask_answer_outage_circuit(tmp_path, m
     assert len(calls) == 3
     assert summary["remaining_sessions"] == 7
     assert summary["circuit_reason"] == "transport"
+
+
+@pytest.mark.parametrize(("text_ms", "end_ms"), [(10, 900), (800, 900)])
+def test_end_frame_latency_excludes_early_draft_lead(text_ms, end_ms):
+    events = [
+        event("question.detected", text="A question?", at_ms=1000),
+        event("answer.delta", text="A useful answer. ", at_ms=1050, **{"pass": "fast"}),
+    ]
+    [row] = timing_rows(
+        events,
+        [
+            {"op": "partial", "text": "A question?", "speaker": "them", "at_ms": text_ms},
+            {"op": "end", "speaker": "them", "at_ms": end_ms},
+            {"op": "end", "speaker": "them", "at_ms": 1500},
+        ],
+    )
+    assert row["first_sentence_boundary_from_end_frame_ms"] == 150
+    assert row["first_sentence_boundary_from_text_ms"] == 1050 - text_ms
+
+
+def test_turn_experiments_are_distinct_and_preserve_model_configuration():
+    from argparse import Namespace
+
+    from copilot_evals.live_answer_session_replay import session_variants
+
+    variants = session_variants(
+        Namespace(
+            live=False,
+            architectures=["B"],
+            turn_experiments=["baseline", "stable", "final", "combined"],
+        )
+    )
+    assert list(variants) == ["B:baseline", "B:stable", "B:final", "B:combined"]
+    assert all(s.answer_architecture == "adaptive" for s in variants.values())
+    assert variants["B:baseline"].early_stable_partial_ms is None
+    assert variants["B:stable"].early_stable_partial_ms == 250
+    assert not variants["B:stable"].early_final_release
+    assert variants["B:final"].early_final_release
+    assert variants["B:combined"].early_stable_partial_ms == 250
+    assert variants["B:combined"].early_final_release
+    assert len({s.openai_fast_model for s in variants.values()}) == 1
