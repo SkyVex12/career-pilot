@@ -1172,10 +1172,31 @@ def replay_settings(live: bool, strategy: str) -> Settings:
 
 
 TURN_EXPERIMENTS = {
-    "baseline": {"early_stable_partial_ms": None, "early_final_release": False},
-    "stable": {"early_stable_partial_ms": 250, "early_final_release": False},
-    "final": {"early_stable_partial_ms": None, "early_final_release": True},
-    "combined": {"early_stable_partial_ms": 250, "early_final_release": True},
+    "baseline": {
+        "early_stable_partial_ms": None,
+        "early_final_release": False,
+        "committed_final_recheck": False,
+    },
+    "stable": {
+        "early_stable_partial_ms": 250,
+        "early_final_release": False,
+        "committed_final_recheck": False,
+    },
+    "final": {
+        "early_stable_partial_ms": None,
+        "early_final_release": True,
+        "committed_final_recheck": False,
+    },
+    "combined": {
+        "early_stable_partial_ms": 250,
+        "early_final_release": True,
+        "committed_final_recheck": False,
+    },
+    "committed": {
+        "early_stable_partial_ms": None,
+        "early_final_release": False,
+        "committed_final_recheck": True,
+    },
 }
 
 
@@ -1262,7 +1283,13 @@ async def execute_owned(
         max_inflight=args.max_inflight,
         strategies=strategies,
         turn_experiments={
-            label: setting.model_dump(include={"early_stable_partial_ms", "early_final_release"})
+            label: setting.model_dump(
+                include={
+                    "early_stable_partial_ms",
+                    "early_final_release",
+                    "committed_final_recheck",
+                }
+            )
             for label, setting in variants.items()
         },
         budget_limit_usd=args.max_cost,

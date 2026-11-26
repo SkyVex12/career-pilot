@@ -473,6 +473,8 @@ class _Turn:
     t0: float
     flushed: asyncio.Event = field(default_factory=asyncio.Event)
     flushed_at: float | None = None  # when the STT final after this speech end arrived
+    committed: asyncio.Event = field(default_factory=asyncio.Event)
+    committed_text: str | None = None  # segment-final text; not an utterance flush
     text: str | None = None  # frozen when the turn is detached from the live text
     held_qid: UUID | None = None  # a held fast pass not released yet
     speculative_qid: UUID | None = None  # a question shown speculatively, not confirmed yet
@@ -513,6 +515,7 @@ class TurnDetector:
         early_all_modes: bool = False,
         early_stable_partial_ms: int | None = None,
         early_final_release: bool = False,
+        committed_final_recheck: bool = False,
         spoken_language: str = "en",
     ) -> None:
         self.host = host
@@ -550,6 +553,7 @@ class TurnDetector:
             early_stable_partial_ms / 1000 if early_stable_partial_ms is not None else None
         )
         self.early_final_release = early_final_release
+        self.committed_final_recheck = committed_final_recheck
         self._stable_timer: asyncio.TimerHandle | None = None
         self._stable_text: str | None = None
         self.speaking = False
@@ -596,6 +600,20 @@ class TurnDetector:
             self.interim = r.text
         if r.text:
             self.text_arrived.set()
+        if (
+            self.committed_final_recheck
+            and r.is_final
+            and r.text
+            and not self.speaking
+            and self.turn is not None
+            and self.turn.text is None
+            and self.task is not None
+            and not self.task.done()
+        ):
+            # A segment-final can commit full words well before the empty from_finalize
+            # acknowledgement. Reconcile those words without declaring the turn complete.
+            self.turn.committed_text = self.utterance()
+            self.turn.committed.set()
         if r.flushed and self.turn is not None:
             self.turn.flushed_at = time.monotonic()
             self.turn.flushed.set()
@@ -816,8 +834,31 @@ class TurnDetector:
     async def _wait_final(self, turn: _Turn, deadline: float) -> None:
         if turn.flushed.is_set():
             return
+        if self.committed_final_recheck:
+            while not turn.flushed.is_set():
+                if turn.cand is not None and self._changed(turn, turn.cand):
+                    return  # The caller reconciles instead of confirming stale text.
+                turn.committed.clear()
+                if not await self._wait_revision(turn, deadline):
+                    return
+            return
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(turn.flushed.wait(), max(0.0, deadline - time.monotonic()))
+
+    async def _wait_revision(self, turn: _Turn, deadline: float | None = None) -> bool:
+        final = asyncio.create_task(turn.flushed.wait())
+        committed = asyncio.create_task(turn.committed.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {final, committed},
+                timeout=max(0.0, deadline - time.monotonic()) if deadline is not None else None,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            return bool(done)
+        finally:
+            final.cancel()
+            committed.cancel()
+            await asyncio.gather(final, committed, return_exceptions=True)
 
     async def _wait_release(self, turn: _Turn) -> None:
         deadline = turn.t0 + self.speculative_s
@@ -862,6 +903,12 @@ class TurnDetector:
         if turn.text is not None or recoverable_question(self._text(turn)) is None:
             return detection
         await self._turn_end(turn)
+        if (
+            self.committed_final_recheck
+            and turn.cand is not None
+            and self._changed(turn, turn.cand)
+        ):
+            return detection
         if detection.decision == "wait":
             await self._sleep_until(turn.t0 + max(self.silence_s, 1.0))
         qtype = recoverable_question(self._text(turn))
@@ -965,11 +1012,22 @@ class TurnDetector:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self.text_arrived.wait(), max(0.0, deadline - time.monotonic()))
 
+    def _revision_text(self, turn: _Turn) -> str:
+        if turn.flushed.is_set():
+            return self._text(turn)
+        if self.committed_final_recheck:
+            return turn.committed_text or ""
+        return ""
+
     def _changed(self, turn: _Turn, cand: _Candidate) -> bool:
-        """The STT final has arrived and its text needs a decision of its own."""
-        if not turn.flushed.is_set():
-            return False
-        final = self._text(turn)
+        """Committed words (or an utterance flush) need a decision of their own."""
+        final = self._revision_text(turn)
+        if self.committed_final_recheck and not turn.flushed.is_set():
+            committed, candidate = _words(final), _words(cand.text)
+            if len(committed) < len(candidate) and candidate[: len(committed)] == committed:
+                # A segment-final may cover only the beginning of an existing interim.
+                # Do not truncate its uncommitted tail before the utterance flush.
+                return False
         return bool(final) and materially_changed(cand.text, final)
 
     async def _decide(self, turn: _Turn, cand: _Candidate) -> tuple[_Candidate, Detection]:
@@ -978,7 +1036,21 @@ class TurnDetector:
         the interim); a final that does not keeps the interim's decision."""
         deadline = turn.t0 + self.silence_s + self.final_wait_s
         while True:
-            if not cand.detection.done() and not turn.flushed.is_set():
+            if self.committed_final_recheck:
+                if not self._changed(turn, cand) and not cand.detection.done():
+                    turn.committed.clear()
+                    if turn.flushed.is_set():
+                        await asyncio.wait({cand.detection})
+                    else:
+                        revision = asyncio.create_task(self._wait_revision(turn))
+                        try:
+                            await asyncio.wait(
+                                {cand.detection, revision}, return_when=asyncio.FIRST_COMPLETED
+                            )
+                        finally:
+                            revision.cancel()
+                            await asyncio.gather(revision, return_exceptions=True)
+            elif not cand.detection.done() and not turn.flushed.is_set():
                 final = asyncio.ensure_future(turn.flushed.wait())
                 try:
                     await asyncio.wait({cand.detection, final}, return_when=asyncio.FIRST_COMPLETED)
@@ -988,7 +1060,7 @@ class TurnDetector:
                 await asyncio.wait({cand.detection})
             if self._changed(turn, cand):
                 self.final_rechecks += 1
-                final = self._text(turn)
+                final = self._revision_text(turn)
                 if turn.held_qid is not None and self._extends(cand.text, final):
                     cand.detection.cancel()
                     cand = self._redetect(turn, final, cand.match)
@@ -1093,7 +1165,9 @@ class TurnDetector:
                     return
                 await self._wait_release(turn)
                 if self._changed(turn, cand) and (
-                    self.early_final_release or not self._extends(cand.text, self._text(turn))
+                    self.committed_final_recheck
+                    or self.early_final_release
+                    or not self._extends(cand.text, self._text(turn))
                 ):
                     self._withdraw_shown(turn)
                     continue
@@ -1106,7 +1180,9 @@ class TurnDetector:
                     turn.speculative_qid = qid
                     self.speculative_starts += 1
                 await self._turn_end(turn)
-                if self._changed(turn, cand) and not self._extends(cand.text, self._text(turn)):
+                if self._changed(turn, cand) and (
+                    self.committed_final_recheck or not self._extends(cand.text, self._text(turn))
+                ):
                     self._withdraw_shown(turn)
                     continue
                 final_text = self._text(turn) or cand.text
@@ -1120,6 +1196,8 @@ class TurnDetector:
                 self._done(turn)
                 return
         except asyncio.CancelledError:
+            if self.committed_final_recheck:
+                cand = turn.cand or cand  # _decide may be awaiting a replacement candidate.
             if cand is not None and not turn.taken:
                 cand.cancel()
                 await asyncio.gather(

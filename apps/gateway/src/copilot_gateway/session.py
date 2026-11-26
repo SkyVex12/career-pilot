@@ -366,6 +366,7 @@ class Session:
             early_all_modes=self.settings.early_decision_all_modes,
             early_stable_partial_ms=self.settings.early_stable_partial_ms,
             early_final_release=self.settings.early_final_release,
+            committed_final_recheck=self.settings.committed_final_recheck,
         )
         self.answers = AnswerEngine(self)
         self._automatic_questions: OrderedDict[UUID, AutomaticQuestion] = OrderedDict()
