@@ -218,3 +218,46 @@ def test_verified_new_model_fast_prices(model: str, tier: str) -> None:
         cache_write_30m_tokens=3000,
         cache_write_12h_tokens=4000,
     ) == Decimal("0.030500")
+
+
+def test_selected_expert_is_priced_and_account_rates_override_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("COPILOT_MODEL_PRICES", raising=False)
+    monkeypatch.delenv("COPILOT_TIER_PRICE_MULTIPLIERS", raising=False)
+    settings = CoreSettings(_env_file=None)  # pyright: ignore[reportCallIssue]
+
+    def estimate(s: CoreSettings) -> Decimal | None:
+        # 100 ordinary input, 100 30m writes, 4,000 reads, 40 output, Fast tier.
+        return cost_usd(
+            "gpt-6.2-sol",
+            "fast",
+            4200,
+            4000,
+            40,
+            s.model_prices,
+            s.tier_price_multipliers,
+            cache_write_tokens=100,
+            cache_write_30m_tokens=100,
+            cache_write_12h_tokens=0,
+        )
+
+    assert estimate(settings) == Decimal("0.002500")
+    monkeypatch.setenv(
+        "COPILOT_MODEL_PRICES",
+        '{"gpt-6.2-sol": {"input": 3, "cached": 0.15, "output": 15}}',
+    )
+    custom = CoreSettings(_env_file=None)  # pyright: ignore[reportCallIssue]
+    assert estimate(custom) == Decimal("0.003750")
+    assert (
+        cost_usd(
+            "gpt-6.2-sol",
+            "fast",
+            4200,
+            4000,
+            40,
+            custom.model_prices,
+            custom.tier_price_multipliers,
+        )
+        is None
+    )  # Missing cache-write telemetry is still unknown, never assumed zero.

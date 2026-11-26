@@ -9,9 +9,9 @@ snapshot like `gpt-6-luna-2026-09-01` uses the `gpt-6-luna` price. The tier mult
 whole price. Model-specific keys such as `gpt-6-luna:fast` override generic tiers;
 there is no universal Priority/Fast multiplier. Flex and Batch default to half.
 
-Only Claude prices are built in. OpenAI model names are configuration, so their prices are
-too: COPILOT_MODEL_PRICES in .env (.env.example has the list prices of its suggested models).
-A model without a price is logged at startup (`missing_prices`) and its cost stays empty.
+Claude prices and the selected adaptive expert model are built in. Other OpenAI models
+use COPILOT_MODEL_PRICES in .env (.env.example lists its suggested models). Configuration
+overrides the built-in rates. Unknown models stay unpriced and are logged at startup.
 
 `input_tokens` includes ordinary input, cache reads, and writes. GPT-5.6+ writes are
 separate, disjoint input categories: 30-minute writes cost 1.25x input and 12-hour writes
@@ -41,6 +41,9 @@ DEFAULT_PRICES: dict[str, ModelPrice] = {
     "claude-sonnet-5-5": ModelPrice(input=2.0, cached=0.20, output=10.0),
     "claude-sonnet-5": ModelPrice(input=2.0, cached=0.20, output=10.0),
     "claude-opus-5-5": ModelPrice(input=4.0, cached=0.20, output=20.0),
+    # Selected live expert, short-context Standard rates verified 2026-11-26:
+    # https://developers.openai.com/api/docs/pricing.md
+    "gpt-6.2-sol": ModelPrice(input=2.0, cached=0.10, output=10.0),
 }
 
 # OpenAI Fast is the renamed Priority tier; these model rates are 2x Standard.
