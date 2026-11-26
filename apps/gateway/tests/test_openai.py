@@ -437,3 +437,54 @@ def test_screen_routes_are_the_fast_and_deep_models_with_time_for_images() -> No
     assert "fast" in hedges
     assert "screen" not in hedges
     assert "screen_code" not in hedges
+
+
+@pytest.mark.parametrize(
+    ("job", "setting"),
+    [
+        ("fast", "openai_fast_service_tier"),
+        ("deep_light", "openai_fast_service_tier"),
+        ("deep", "openai_deep_service_tier"),
+    ],
+)
+@pytest.mark.parametrize("tier", ["default", "fast", "priority", "flex"])
+async def test_live_primary_tier_reaches_responses_without_changing_reasoning(job, setting, tier):
+    captured = []
+    client = openai_client(captured)
+    provider = OpenAIProvider("openai", client)
+    settings = openai_settings(**{setting: tier})
+    route = build_routes(settings, [provider])[job][0]
+    req = prompts.adaptive_pass(ctx(), "", "Explain the mechanism.", "technical", 400)
+    try:
+        chunks = [chunk async for chunk in provider.stream(route.model, req, route.params)]
+    finally:
+        await client.close()
+    assert any(isinstance(chunk, LLMDone) for chunk in chunks)
+    sent = captured[0]["json"]
+    assert sent["service_tier"] == tier
+    assert sent["reasoning"] == {"effort": "low" if job == "deep" else "none"}
+    assert sent["max_output_tokens"] == (2448 if job == "deep" else 400)
+    assert sent["store"] is False
+
+
+@pytest.mark.parametrize("retry", [None, "priority", "fast"])
+def test_answer_primary_tier_preserves_independent_retry_and_other_jobs(retry):
+    from copilot_gateway.testing import ScriptedProvider
+
+    settings = openai_settings(
+        openai_fast_service_tier="fast",
+        openai_deep_service_tier="fast",
+        openai_fast_retry_tier=retry,
+        openai_deep_retry_tier=retry,
+    )
+    routes = build_routes(settings, [ScriptedProvider("openai")])
+    for job in ("fast", "deep_light", "deep"):
+        assert routes[job][0].params["service_tier"] == "fast"
+        assert routes[job][1].params["service_tier"] == (retry or "fast")
+    for job in ("detector", "summary", "screen", "screen_code"):
+        assert "service_tier" not in routes[job][0].params
+    # These settings cannot leak OpenAI processing tiers into Claude requests.
+    for job in ("fast", "deep_light", "deep"):
+        assert job_params(settings, "anthropic", job) == job_params(
+            openai_settings(), "anthropic", job
+        )

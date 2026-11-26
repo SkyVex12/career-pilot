@@ -1115,6 +1115,12 @@ class BufferedProgressSnapshots(ProgressSnapshots):
         }
 
 
+def _reservation_tier(params: Mapping[str, Any]) -> str:
+    """Normalize pricing aliases without changing the request sent to the provider."""
+    tier = str(params.get("service_tier", "standard"))
+    return "standard" if tier in ("default", "auto") else tier
+
+
 class AuditProvider(MeteredProvider):
     def __init__(
         self,
@@ -1145,7 +1151,13 @@ class AuditProvider(MeteredProvider):
             save(self.directory / "request-identities.json", self.requests)
 
     async def _unary(
-        self, operation: str, model: str, payload: Any, invoke: Callable[[], Awaitable[Any]]
+        self,
+        operation: str,
+        model: str,
+        payload: Any,
+        invoke: Callable[[], Awaitable[Any]],
+        *,
+        tier: str = "standard",
     ) -> Any:
         started = time.monotonic()
         record: dict[str, Any] = {
@@ -1169,7 +1181,7 @@ class AuditProvider(MeteredProvider):
             admitted = True
             record.update(status="started", dispatch_admitted=True)
             self.checkpoint(record)
-            ticket = self.budget.reserve(model, payload, 0)
+            ticket = self.budget.reserve(model, payload, 0, tier)
             if isinstance(self.store, BufferedRecordStore):
                 waiting = time.perf_counter()
                 try:
@@ -1245,10 +1257,24 @@ class AuditProvider(MeteredProvider):
     async def prewarm(
         self, model: str, req: LLMRequest, params: Mapping[str, Any]
     ) -> LLMDone | None:
+        tier = _reservation_tier(params)
         if not isinstance(self.store, BufferedRecordStore):
-            return await super().prewarm(model, req, params)
+            # Keep the metered path's lifecycle while reserving its configured tier.
+            ticket = self.budget.reserve(model, asdict(req), 0, tier)
+            try:
+                done: LLMDone | None = await self.inner.prewarm(model, req, params)
+            except Exception as error:
+                self.connection_failure(ticket, error)
+                raise
+            if done is not None:
+                self.budget.finish(ticket, done)
+            return done
         return await self._unary(
-            "prewarm", model, asdict(req), lambda: self.inner.prewarm(model, req, params)
+            "prewarm",
+            model,
+            asdict(req),
+            lambda: self.inner.prewarm(model, req, params),
+            tier=tier,
         )
 
     async def stream(
@@ -1282,7 +1308,7 @@ class AuditProvider(MeteredProvider):
                 model,
                 asdict(req),
                 req.max_tokens + int(params.get("max_output_tokens_extra", 0)),
-                str(params.get("service_tier", "standard")),
+                _reservation_tier(params),
             )
             if isinstance(self.store, BufferedRecordStore):
                 waiting = time.perf_counter()

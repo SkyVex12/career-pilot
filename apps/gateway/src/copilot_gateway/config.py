@@ -119,6 +119,10 @@ class Settings(CoreSettings):
     # Priority) on the few that stall. None: retry only after the timeout, on the same tier.
     fast_hedge_ms: int | None = 1200
     openai_fast_retry_tier: str | None = "priority"
+    # Optional primary tiers for live answer routes. None preserves the provider default;
+    # retry tiers remain independent. Screen and background jobs keep their own settings.
+    openai_fast_service_tier: Literal["default", "priority", "fast", "flex"] | None = None
+    openai_deep_service_tier: Literal["default", "priority", "fast", "flex"] | None = None
     # The same for the deep pass. In the 2026-10-29 interviews 7 deep passes got no first token
     # within their timeout and retried on the same model and tier: their first words came at
     # 9.7 to 11 s instead of about 4 s (two more were lost in a runaway session). Its first

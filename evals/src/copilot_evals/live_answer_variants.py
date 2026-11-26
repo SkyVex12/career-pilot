@@ -27,6 +27,8 @@ SETTINGS_FIELDS = {
     "openai_first_token_timeout_ms",
     "openai_deep_first_token_timeout_ms",
     "openai_fast_retry_tier",
+    "openai_fast_service_tier",
+    "openai_deep_service_tier",
     "openai_deep_retry_tier",
     "fast_hedge_ms",
     "deep_hedge_ms",

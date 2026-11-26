@@ -301,3 +301,43 @@ def test_recovery_variant_is_hashed_priced_and_keeps_one_expert_route(tmp_path):
     }
     with pytest.raises(ValueError, match="rate missing"):
         validate_route_prices(router, variant.settings)
+
+
+def test_production_primary_tiers_are_bound_without_eval_route_overrides(tmp_path):
+    base = Settings(
+        _env_file=None,  # pyright: ignore[reportCallIssue]
+        llm_providers=["openai"],
+        openai_fast_model="fast-model",
+        openai_deep_model="expert-model",
+        openai_detector_model="detector-model",
+    )
+    path = tmp_path / "variants.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "variants": [
+                    {
+                        "label": "B",
+                        "architecture": "adaptive",
+                        "settings": {
+                            "openai_fast_service_tier": "default",
+                            "openai_deep_service_tier": "fast",
+                            "openai_deep_retry_tier": "fast",
+                        },
+                    }
+                ],
+            }
+        )
+    )
+    variant = load_variants(path, base, tmp_path)["B"]
+    identity = variant.identity(CONFIG_FIELDS)
+    assert identity["settings"]["openai_fast_service_tier"] == "default"
+    assert identity["settings"]["openai_deep_service_tier"] == "fast"
+    assert identity["fast_tier"] is None
+    assert identity["expert_tier"] is None
+    routes = build_router(variant.settings, [ScriptedProvider("openai")]).routes
+    assert [r.params["service_tier"] for r in routes["deep"]] == ["fast", "fast"]
+    assert routes["fast"][0].params["service_tier"] == "default"
+    assert base.openai_fast_service_tier is None
+    assert base.openai_deep_service_tier is None

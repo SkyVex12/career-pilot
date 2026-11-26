@@ -60,6 +60,13 @@ def _model_ids(settings: Settings, provider: str, job: str, family: Family) -> t
 def job_params(settings: Settings, provider: str, job: str) -> dict[str, Any]:
     if provider == "openai":
         params = openai_params(settings, OPENAI_JOB.get(job, job))
+        tier = {
+            "fast": settings.openai_fast_service_tier,
+            "deep_light": settings.openai_fast_service_tier,
+            "deep": settings.openai_deep_service_tier,
+        }.get(job)
+        if tier is not None:
+            params = {**params, "service_tier": tier}
         if job == "screen_code" and settings.screen_code_reasoning is not None:
             params = {**params, "reasoning": {"effort": settings.screen_code_reasoning}}
         return params
