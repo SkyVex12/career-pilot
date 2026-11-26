@@ -379,6 +379,28 @@ ROWS.update(
     }
 )
 
+# Preparation is API-only and deliberately has no DELETE grant. Requests also
+# have immutable identity, so the generic CRUD matrix is not its contract.
+PREPARATION_ROWS: dict[str, Callable[[World, int], dict[str, Any]]] = {
+    "xruby_preparation_requests": lambda w, n: {
+        "id": uuid.uuid4(),
+        "account_id": w.user_id,
+        "profile_id": w.user_id,
+        "interview_id": w.interview_id,
+        "grant_id": f"rls-test-{n}",
+        "grant_ref": "xruby-oauth:access:" + "a" * 64,
+        "grant_hash": "b" * 64,
+        "source_hash": "c" * 64,
+        "request_hash": "d" * 64,
+        "key_hash": f"{n:064x}",
+        "grant_expires_at": NOW + timedelta(days=365),
+    },
+    "xruby_preparation_budgets": lambda w, n: {
+        "account_id": w.user_id,
+        "day": NOW.date() + timedelta(days=n),
+        "reservations": 1,
+    },
+}
 USER_TABLES = list(ROWS)
 # Views over user tables. They use security_invoker, so the base table's RLS applies;
 # their grants are their own (the gateway gets none).
@@ -462,6 +484,8 @@ async def db() -> AsyncIterator[Db]:
                         )
                     if table == "memory_nodes":
                         await insert(conn, table, make(w, 1))
+                for table, make in PREPARATION_ROWS.items():
+                    await insert(conn, table, make(w, 0))
         yield Db(url, conn, a, b)
     finally:
         if conn is not None:
@@ -588,8 +612,12 @@ async def test_every_user_table_has_forced_rls_and_is_tested(db: Db) -> None:
         select c.relname, c.relrowsecurity, c.relforcerowsecurity,
                exists (select 1 from pg_policy p
                        where p.polrelid = c.oid
-                         and p.polname in ('tenant_isolation','private_account','account_scope',
-                           'membership_self','operations_scope','outbox_scope')) as has_policy
+                         and (p.polname in ('tenant_isolation','private_account','account_scope',
+                           'membership_self','operations_scope','outbox_scope')
+                           or (c.relname='xruby_preparation_requests'
+                               and p.polname='xruby_preparation_account')
+                           or (c.relname='xruby_preparation_budgets'
+                               and p.polname='xruby_budget_account'))) as has_policy
         from pg_class c join pg_namespace n on n.oid = c.relnamespace
         where n.nspname = 'app' and c.relkind = 'r'
           and (c.relname in ('workspaces','accounts') or exists (
@@ -608,6 +636,7 @@ async def test_every_user_table_has_forced_rls_and_is_tested(db: Db) -> None:
         "workspace_memberships",
         "operations",
         "outbox_events",
+        *PREPARATION_ROWS,
     }
     found = {
         aliases.get(r["relname"], r["relname"]) for r in rows if r["relname"] not in dedicated
@@ -621,6 +650,72 @@ async def test_every_user_table_has_forced_rls_and_is_tested(db: Db) -> None:
         assert r["relrowsecurity"], f"{r['relname']}: RLS not enabled"
         assert r["relforcerowsecurity"], f"{r['relname']}: RLS not forced"
         assert r["has_policy"], f"{r['relname']}: no tenant_isolation policy"
+
+
+@pytest.mark.parametrize("role", [*APP_ROLES, "app_system"])
+@pytest.mark.parametrize("table", list(PREPARATION_ROWS))
+async def test_preparation_account_isolation(db: Db, role: str, table: str) -> None:
+    _, rows, err = await as_user(db, role, db.a, f"select account_id from app.{table}")
+    if role == "app_api":
+        assert err is None
+        assert [r["account_id"] for r in rows] == [db.a.user_id]
+    else:
+        assert err == INSUFFICIENT_PRIVILEGE
+    for owner in (db.a, db.b):
+        row = PREPARATION_ROWS[table](owner, 1)
+        cols = ", ".join(row)
+        params = ", ".join(f"${i}" for i in range(1, len(row) + 1))
+        status, _, err = await as_user(
+            db, role, db.a, f"insert into app.{table} ({cols}) values ({params})", *row.values()
+        )
+        if role == "app_api" and owner is db.a:
+            assert err is None
+            assert status == "INSERT 0 1"
+        else:
+            assert err == INSUFFICIENT_PRIVILEGE
+    change = "state='rejected'" if table.endswith("requests") else "reservations=reservations+1"
+    for owner in (db.a, db.b):
+        status, _, err = await as_user(
+            db, role, db.a, f"update app.{table} set {change} where account_id=$1", owner.user_id
+        )
+        if role == "app_api":
+            assert err is None
+            assert status == ("UPDATE 1" if owner is db.a else "UPDATE 0")
+        else:
+            assert err == INSUFFICIENT_PRIVILEGE
+    _, _, err = await as_user(
+        db,
+        role,
+        db.a,
+        f"update app.{table} set account_id=$1 where account_id=$2",
+        db.b.user_id,
+        db.a.user_id,
+    )
+    expected = (
+        "P0001" if role == "app_api" and table.endswith("requests") else INSUFFICIENT_PRIVILEGE
+    )
+    assert err == expected  # immutable request identity or RLS/ACL refusal
+    _, _, err = await as_user(db, role, db.a, f"delete from app.{table}")
+    assert err == INSUFFICIENT_PRIVILEGE
+
+
+@pytest.mark.parametrize("role", [*APP_ROLES, "app_system"])
+async def test_preparation_global_budget_is_not_directly_accessible(db: Db, role: str) -> None:
+    flags = await db.conn.fetchrow(
+        "select relrowsecurity,relforcerowsecurity from pg_class "
+        "where oid='app.xruby_preparation_global_budgets'::regclass"
+    )
+    assert flags is not None
+    assert flags["relrowsecurity"]
+    assert flags["relforcerowsecurity"]
+    for sql in (
+        "select * from app.xruby_preparation_global_budgets",
+        "insert into app.xruby_preparation_global_budgets values('2026-10-05',1)",
+        "update app.xruby_preparation_global_budgets set reservations=reservations",
+        "delete from app.xruby_preparation_global_budgets",
+    ):
+        _, _, err = await as_user(db, role, db.a, sql)
+        assert err == INSUFFICIENT_PRIVILEGE
 
 
 async def test_role_attributes_and_privileges(db: Db) -> None:

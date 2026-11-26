@@ -126,8 +126,8 @@ async def test_0028_upgrade_with_extracted_work_logs_preserves_sources_and_const
 
         # The old migration failed here with ObjectInUseError on extracted work_logs.
         upgraded = await apply(url, MIGRATIONS)
-        assert len(upgraded) == 7
-        assert await conn.fetchval("select max(version) from public.schema_migrations") == "0035"
+        assert len(upgraded) == 9
+        assert await conn.fetchval("select max(version) from public.schema_migrations") == "0037"
         assert await apply(url, MIGRATIONS) == []
         for table, expected in before.items():
             columns = ",".join(expected[0])

@@ -18,6 +18,14 @@ class ApiSettings(DataSettings):
     personal_ai_oauth_issuer: str | None = None
     personal_ai_oauth_clients: dict[str, list[str]] = Field(default_factory=dict)
     personal_ai_oauth_token_ttl_s: int = Field(default=1200, ge=60, le=3600)
+    # Independent, explicitly consented XRuby read-only resource. Disabled by default.
+    xruby_oauth_issuer: str | None = None
+    xruby_oauth_clients: dict[str, list[str]] = Field(default_factory=dict)
+    xruby_oauth_token_ttl_s: int = Field(default=1200, ge=60, le=3600)
+    xruby_preparation_enabled: bool = False
+    xruby_preparation_daily_limit: int = Field(default=0, ge=0, le=20)
+    xruby_preparation_global_daily_limit: int = Field(default=0, ge=0, le=10000)
+    xruby_preparation_max_output_tokens: int = Field(default=2000, ge=256, le=4000)
     practice_tts_models: dict[str, str] = Field(
         default_factory=lambda: dict(DEFAULT_PRACTICE_VOICES)
     )
