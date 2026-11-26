@@ -103,7 +103,9 @@ async def bounded(svc: SvcDep, request: Request, action: str, limit: int = 60) -
         raise HTTPException(429, "Too many OAuth requests", headers={"Retry-After": "60"})
 
 
-def redirect_allowed(svc: SvcDep, client: str, redirect: str) -> bool:
+def redirect_allowed(
+    svc: SvcDep, client: str, redirect: str, *, clients: dict[str, list[str]] | None = None
+) -> bool:
     try:
         u = urlsplit(redirect)
     except ValueError:
@@ -115,7 +117,8 @@ def redirect_allowed(svc: SvcDep, client: str, redirect: str) -> bool:
             return False
     except ValueError:
         return False
-    for registered in svc.settings.personal_ai_oauth_clients.get(client, []):
+    registered_clients = svc.settings.personal_ai_oauth_clients if clients is None else clients
+    for registered in registered_clients.get(client, []):
         if u.scheme == "https" and redirect == registered:
             return True
         # RFC 8252: loopback clients select their available listener port at login.

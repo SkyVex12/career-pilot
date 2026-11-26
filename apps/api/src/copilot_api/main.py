@@ -40,6 +40,8 @@ from copilot_api.routes import (
     seats,
     sessions,
     sync,
+    xruby_oauth,
+    xruby_reads,
 )
 from copilot_api.tokens import TokenService
 from copilot_core import __version__, logs, operations, versions
@@ -178,16 +180,24 @@ def create_app(services: Services | None = None) -> FastAPI:
         owned = services is None
         app.state.services = services or await build_services(ApiSettings())
         from copilot_api.interactive import InteractiveRunner
+        from copilot_api.xruby_preparation import Runner, validate_release
 
         runner = InteractiveRunner(app.state.services)
-        runner_task = (
-            asyncio.create_task(runner.run())
-            if app.state.services.settings.interactive_runner_enabled
-            else None
-        )
+        prepare_runner = Runner(app.state.services)
+        runner_task = None
+        prepare_task = None
         try:
+            if app.state.services.settings.xruby_preparation_enabled:
+                await validate_release(app.state.services)
+                prepare_task = asyncio.create_task(prepare_runner.run())
+            if app.state.services.settings.interactive_runner_enabled:
+                runner_task = asyncio.create_task(runner.run())
             yield
         finally:
+            prepare_runner.stop.set()
+            if prepare_task is not None:
+                prepare_task.cancel()
+                await asyncio.gather(prepare_task, return_exceptions=True)
             runner.stop.set()
             if runner_task is not None:
                 await runner_task
@@ -207,6 +217,11 @@ def create_app(services: Services | None = None) -> FastAPI:
 
     app.add_exception_handler(personal_ai_oauth.OAuthError, personal_ai_oauth.oauth_exception)
     app.include_router(personal_ai_oauth.router)
+    app.include_router(xruby_oauth.router)
+    app.include_router(xruby_reads.router)
+    from copilot_api.routes import xruby_preparation
+
+    app.include_router(xruby_preparation.router)
     app.include_router(personal_ai.mcp_router, prefix="/v1")
 
     # Open without a Career-OS link: sign-in, settings, profiles and the link itself.
