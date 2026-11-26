@@ -21,6 +21,7 @@ from copilot_gateway.auth import Principal
 from copilot_gateway.config import Settings
 from copilot_gateway.router import build_router
 from copilot_gateway.session import Session, SessionInfo, SessionManager
+from copilot_gateway.testing import ScriptedProvider
 from copilot_gateway.turn import FIRST, Detection
 from copilot_protocol import models
 
@@ -803,3 +804,206 @@ async def test_category_cache_requires_current_facts_and_reuses_only_exact_reque
         "model",
         "cache",
     ]
+
+
+RUST = "In Rust, what happens when a future is dropped while waiting on an async operation?"
+
+
+@pytest.mark.parametrize("stage", ["held", "shown_empty", "forced_empty"])
+async def test_session_late_expert_upgrade_uses_isolated_primary(session, env, stage):
+    settings = configured(
+        env.settings,
+        prewarm_jobs=[],
+        llm_warm_interval_s=None,
+        force_type_wait_ms=100,
+        llm_providers=["openai"],
+        openai_detector_model="gpt-6-luna",
+        openai_detector_reasoning="none",
+        openai_summary_model="gpt-6-luna",
+        openai_fast_model="gpt-6-luna",
+        openai_fast_reasoning="none",
+        openai_deep_model="gpt-6.1-sol",
+        openai_deep_reasoning="low",
+        adaptive_expert_route={
+            "model": "gpt-6.2-sol",
+            "reasoning": "low",
+            "service_tier": "fast",
+            "retry_tier": "fast",
+            "first_token_timeout_ms": 20000,
+            "hedge_ms": None,
+        },
+    )
+    provider = ScriptedProvider("openai")
+    session.settings = session.svc.settings = settings
+    session.router = session.svc.router = build_router(settings, [provider])
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def memory(text, pass_):
+        entered.set()
+        await release.wait()
+        return ["Verified original context."], {"memory_hits": 1}
+
+    session.memory_lines = memory
+    qid = session.start_held(RUST, time.monotonic() - 0.3, None)
+    old = session.answers.questions[qid]
+    await asyncio.wait_for(entered.wait(), 1)
+    assert old.plans["fast"] == AnswerPlan("standard", "fast", 400)
+    snapshot = old.snapshots["fast"]
+    detection = asyncio.get_running_loop().create_future()
+    if stage == "forced_empty":
+        session._force_taken(qid, RUST, detection, respond=False)
+    elif stage == "shown_empty":
+        session.release_question(qid, RUST, FIRST, speculative=True)
+        session.retype_question(qid, FIRST)
+    before = await wire(session)
+    assert not [m for m in before if m["type"].startswith("answer.")]
+    assert len([m for m in before if m["type"] == "question.detected"]) == (
+        0 if stage == "held" else 1
+    )
+    released_at = old.released_at
+    revised = RUST + " Include resource cleanup."
+    session.prompt_context = lambda: prompts.PromptContext("Changed", "interview", "Later", None)
+    resolved = Detection("answer", "technical", depth="deep", latency_ms=500)
+    if stage == "forced_empty":
+        detection.set_result(resolved)
+        await asyncio.gather(*session._forced)
+    elif stage == "held":
+        session.release_question(qid, revised, resolved, speculative=False)
+    else:
+        old.text = revised
+        session.retype_question(qid, resolved)
+    new = session.answers.questions[qid]
+    assert new is not old
+    assert new.qid == old.qid
+    assert old.discarded
+    assert new.plans["fast"] == AnswerPlan("expert", "deep", 1200)
+    assert session.answers.strategy(new) == "adaptive"
+    assert new.snapshots["fast"].context is snapshot.context
+    assert new.snapshots["fast"].transcript is snapshot.transcript
+    assert new.snapshots["fast"].text == new.text
+    assert new.t0 == old.t0
+    assert new.forced == old.forced
+    if stage != "held":
+        assert new.released_at == released_at
+    session.retype_question(qid, resolved)
+    assert session.answers.questions[qid] is new  # Already expert: never dispatch twice.
+    session.confirm_question(qid, new.text, 500, 300)
+    release.set()
+    await session.answers.wait_idle()
+    assert len(provider.calls) == 1
+    assert provider.calls[0][1] == "gpt-6.2-sol"
+    request = provider.requests[0][1]
+    assert request.max_tokens == 1200
+    assert new.text in str(request.content)
+    assert "Later" not in str(request.system)
+    route = session.router.routes["adaptive_expert"][0]
+    assert route.first_token_timeout_s == 20
+    assert route.params["reasoning"]["effort"] == "low"
+    assert route.params["service_tier"] == "fast"
+    after = await wire(session)
+    assert not [m for m in after if m["type"] == "question.cancelled"]
+    assert {m["pass"] for m in after if m["type"] == "answer.done"} == {"fast"}
+    assert {m["question_id"] for m in after if m["type"].startswith("answer.")} == {str(qid)}
+    detections = [m for m in after if m["type"] == "question.detected"]
+    assert all(m["answer_strategy"] == "adaptive" for m in detections)
+    first_output = next(m["seq"] for m in after if m["type"].startswith("answer."))
+    assert all(m["seq"] < first_output for m in detections)
+    if stage == "forced_empty":
+        assert all(m["speculative"] is False for m in detections)
+
+
+@pytest.mark.parametrize("boundary", ["whitespace", "done", "error", "expand"])
+async def test_late_expert_upgrade_preserves_answer_boundary(session, boundary):
+    gate = asyncio.Event()
+
+    async def memory(text, pass_):
+        await gate.wait()
+        return [], {}
+
+    session.memory_lines = memory
+    qid = session.start_held(RUST, time.monotonic(), None)
+    q = session.answers.questions[qid]
+    session.release_question(qid, RUST, FIRST, speculative=False)
+    if boundary == "whitespace":
+        session.emit(models.AnswerDelta, question_id=qid, **{"pass": "fast"}, text=" ", sequence=0)
+    elif boundary == "done":
+        session.emit(
+            models.AnswerDone,
+            question_id=qid,
+            **{"pass": "fast"},
+            source="model",
+            memory_refs=[],
+            usage={"input_tokens": 0, "cached_tokens": 0, "output_tokens": 0},
+            latency_ms={},
+            delta_count=0,
+        )
+    elif boundary == "error":
+        session.emit(models.AnswerError, question_id=qid, **{"pass": "fast"}, code="internal")
+    else:
+        assert session.answers.expand(qid)
+    session.retype_question(qid, Detection("answer", "technical", depth="deep"))
+    assert session.answers.questions[qid] is q
+    assert q.plans["fast"] == AnswerPlan("standard", "fast", 400)
+    assert await session.answers.shutdown(within_s=1)
+
+
+@pytest.mark.parametrize(
+    ("architecture", "text", "initial_type", "initial_depth", "new_type", "new_depth"),
+    [
+        ("adaptive_hybrid", RUST, "other", None, "technical", "deep"),
+        ("adaptive_on_demand", RUST, "other", None, "technical", "deep"),
+        ("adaptive", RUST, "technical", "deep", "other", None),
+        ("adaptive", "Where are you based?", "other", None, "technical", "deep"),
+        (
+            "adaptive",
+            "Tell me about a time you fixed an outage.",
+            "other",
+            None,
+            "technical",
+            "deep",
+        ),
+    ],
+)
+async def test_late_expert_upgrade_has_no_other_replanning(
+    settings_factory, architecture, text, initial_type, initial_depth, new_type, new_depth
+):
+    engine, _, _, _, _, _ = make_engine(
+        configured(
+            settings_factory, answer_architecture=architecture, adaptive_technical_legacy=False
+        )
+    )
+    q = question(text=text, qtype=initial_type, depth=initial_depth, held=True)
+    engine.add(q)
+    frozen = q.plans["fast"]
+    q.qtype, q.depth = new_type, new_depth
+    assert engine.reconcile_strategy(q) is q
+    assert q.plans["fast"] == frozen
+    assert await engine.shutdown(within_s=1)
+
+
+@pytest.mark.parametrize("tail", ["blank_delta_done", "blank_done_only", "blank_error"])
+async def test_late_expert_upgrade_owns_retired_provider_tails(settings_factory, tail):
+    engine, router, events, logs, writes, _ = make_engine(configured(settings_factory), tail)
+    old = question(text=RUST, qtype="other", held=True)
+    engine.add(old)
+    await asyncio.wait_for(router.entered.wait(), 1)
+    old.qtype, old.depth = "technical", "deep"
+    new = engine.reconcile_strategy(old)
+    assert new is not old
+    assert old.discarded
+    engine.release(new.qid)
+    engine.confirm(new.qid, new.text, 0)
+    await asyncio.wait_for(router.cancelled.wait(), 1)
+    router.release_old.set()
+    await engine.wait_idle()
+    assert [req.max_tokens for _, req in router.requests] == [400, 1200]
+    assert not any("Obsolete" in str(fields) for _, fields in events)
+    assert len([kind for kind, _ in events if kind == "AnswerDone"]) == 1
+    assert not [kind for kind, _ in events if kind in {"AnswerError", "QuestionCancelled"}]
+    assert all("Obsolete" not in str(value) for value in writes)
+    cancelled = [item for item in logs if item["kind"] == "pass_cancelled"]
+    assert len(cancelled) == 1
+    if tail == "blank_done_only":
+        assert cancelled[0]["input_tokens"] == 91
+        assert cancelled[0]["output_tokens"] == 13
+    assert await engine.shutdown(within_s=1)

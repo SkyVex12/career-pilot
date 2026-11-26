@@ -830,7 +830,17 @@ class AnswerEngine:
             return q
         desired = self._selected_strategy(q)
         current = self.strategy(q)
-        if desired == current:
+        primary = q.plans.get("fast")
+        # A delayed classifier may identify an expert question after the provisional
+        # standard request started. Upgrade only before exposure; C/D and all other
+        # depth transitions retain their existing frozen-plan behavior.
+        upgrade = (
+            current == desired == "adaptive"
+            and primary is not None
+            and primary.depth == "standard"
+            and plan_answer(q.text, q.qtype, q.depth, current).depth == "expert"
+        )
+        if desired == current and not upgrade:
             return q
         shown = q.exposed or not q.held
         if (
@@ -839,7 +849,7 @@ class AnswerEngine:
             or "deep" in q.tasks
             or q.fast_ended
             or q.logged
-            or (shown and (current == "legacy_dual" or desired != "legacy_dual"))
+            or (shown and not upgrade and (current == "legacy_dual" or desired != "legacy_dual"))
         ):
             if q.retained_strategy != desired:
                 q.retained_strategy = desired
@@ -849,6 +859,7 @@ class AnswerEngine:
                         "question_id": str(q.qid),
                         "answer_strategy": current,
                         "desired_strategy": desired,
+                        "expert_upgrade": upgrade,
                         "reason": "answer_or_expert_exposed"
                         if q.answer_exposed or q.expanded_at is not None or "deep" in q.tasks
                         else "generation_stable",
@@ -896,7 +907,11 @@ class AnswerEngine:
                 "question_id": str(q.qid),
                 "previous_strategy": current,
                 "answer_strategy": desired,
-                "reason": "empty_card" if shown else "unexposed_held",
+                "reason": "pre_answer_expert_upgrade"
+                if upgrade
+                else "empty_card"
+                if shown
+                else "unexposed_held",
             }
         )
         self.add(replacement)
