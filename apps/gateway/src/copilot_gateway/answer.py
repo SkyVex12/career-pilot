@@ -298,6 +298,8 @@ class Question:
     # A held question (speculative fast pass started before the detector decided): its fast
     # pass's text is buffered here and nothing is sent until `release`; `discard` drops it.
     held: bool = False
+    hidden_classified: bool = False  # A positive detector selected this still-hidden request.
+    hidden_original: tuple[Architecture, AnswerPlan | None] | None = None
     held_text: list[str] = field(default_factory=list[str])
     released: asyncio.Event = field(default_factory=asyncio.Event)
     released_at: float | None = None
@@ -819,7 +821,7 @@ class AnswerEngine:
     def strategy(self, q: Question) -> Architecture:
         return q.answer_strategy or self._selected_strategy(q)
 
-    def reconcile_strategy(self, q: Question) -> Question:
+    def reconcile_strategy(self, q: Question, *, restore_provisional: bool = False) -> Question:
         """Replace a generation before answer content or terminal state is exposed.
 
         Once any answer event or expert request exists, retain the frozen generation.
@@ -828,7 +830,19 @@ class AnswerEngine:
         """
         if self.questions.get(q.qid) is not q or q.cancelled or q.discarded or q.superseded:
             return q
-        desired = self._selected_strategy(q)
+        original = None
+        if restore_provisional:
+            if (
+                not q.hidden_classified
+                or q.hidden_original is None
+                or not q.held
+                or q.exposed
+                or q.confirmed
+                or q.released.is_set()
+            ):
+                return q
+            original = q.hidden_original
+        desired = original[0] if original is not None else self._selected_strategy(q)
         current = self.strategy(q)
         primary = q.plans.get("fast")
         # A delayed classifier may identify an expert question after the provisional
@@ -840,7 +854,7 @@ class AnswerEngine:
             and primary.depth == "standard"
             and plan_answer(q.text, q.qtype, q.depth, current).depth == "expert"
         )
-        if desired == current and not upgrade:
+        if desired == current and not upgrade and original is None:
             return q
         shown = q.exposed or not q.held
         if (
@@ -892,6 +906,7 @@ class AnswerEngine:
             was_speculative=q.was_speculative,
             exposed=shown,
             answer_strategy=desired,
+            plans={"fast": original[1]} if original is not None and original[1] is not None else {},
             preferences=dict(q.preferences),
             snapshots={
                 key: value if value.text == q.text else replace(value, text=q.text)
@@ -907,7 +922,9 @@ class AnswerEngine:
                 "question_id": str(q.qid),
                 "previous_strategy": current,
                 "answer_strategy": desired,
-                "reason": "pre_answer_expert_upgrade"
+                "reason": "forced_hidden_reset"
+                if original is not None
+                else "pre_answer_expert_upgrade"
                 if upgrade
                 else "empty_card"
                 if shown
@@ -1792,7 +1809,7 @@ class AnswerEngine:
                 ctx,
                 transcript,
                 text,
-                None if q.held else q.qtype,
+                None if q.held and not q.hidden_classified else q.qtype,
                 min(plan.max_tokens, s.adaptive_max_tokens),
                 memory,
                 depth=plan.depth,
@@ -1801,7 +1818,7 @@ class AnswerEngine:
             )
         if pass_ == "fast":
             # A held pass starts before the detector has typed the question.
-            qtype = None if q.held else q.qtype
+            qtype = None if q.held and not q.hidden_classified else q.qtype
             follow = screen.follow_up(problem, ctx.user_name, deep=False) if problem else None
             return prompts.fast_pass(
                 ctx, transcript, text, qtype, s.fast_pass_max_tokens, memory, problem=follow

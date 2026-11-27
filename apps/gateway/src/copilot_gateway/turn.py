@@ -398,6 +398,7 @@ class _Candidate:
     text: str
     detection: "asyncio.Future[Detection]"
     match: "asyncio.Task[object] | None"
+    route_selected: bool = False  # classification replaced this still-hidden generation
 
     def cancel(self) -> None:
         self.detection.cancel()
@@ -453,6 +454,10 @@ class TurnHost(Protocol):
 
     def discard_question(self, qid: UUID) -> None:
         """Cancel a held pass that was never shown; nothing is sent."""
+        ...
+
+    def classify_held(self, qid: UUID, text: str, detection: Detection) -> bool:
+        """Select a hidden generation's route; True only when that generation was replaced."""
         ...
 
     def retime_held(self, qid: UUID, t0: float) -> None:
@@ -528,6 +533,7 @@ class TurnDetector:
         early_all_modes: bool = False,
         early_stable_partial_ms: int | None = None,
         early_final_release: bool = False,
+        early_route_selection: bool = False,
         committed_final_recheck: bool = False,
         late_first_text_recovery_ms: int | None = None,
         spoken_language: str = "en",
@@ -567,6 +573,7 @@ class TurnDetector:
             early_stable_partial_ms / 1000 if early_stable_partial_ms is not None else None
         )
         self.early_final_release = early_final_release
+        self.early_route_selection = early_route_selection
         self.committed_final_recheck = committed_final_recheck
         # Only an empty first-text timeout can opt into this separate recovery window.
         # It never extends the ordinary turn's wait or changes its latency anchor.
@@ -829,8 +836,36 @@ class TurnDetector:
         if not duplicate and self._should_hold(text):
             self.held_starts += 1
             held = self.host.start_held(text, now, match)
-        self.early = _Early(_Candidate(text, detection, match), held, now)
+        self.early = early = _Early(_Candidate(text, detection, match), held, now)
+        if self.early_route_selection and held is not None:
+            detection.add_done_callback(lambda future: self._classify_early(early, future))
         return True
+
+    def _classify_early(self, early: _Early, future: "asyncio.Future[Detection]") -> None:
+        # Speech end transfers this owner to _turn, which has its own synchronous fallback.
+        # A queued completion must never act on a continuation, retired owner or new turn.
+        # Observe retired failures too, without leaving an unhandled Future exception.
+        if future.cancelled() or future.exception() is not None:
+            return
+        if (
+            self.early is not early
+            or not self.speaking
+            or early.cand.detection is not future
+            or early.held is None
+            or self.utterance() != early.cand.text
+        ):
+            return
+        self._classify_held(early.cand, early.held, future.result())
+
+    def _classify_held(self, cand: _Candidate, qid: UUID | None, detection: Detection) -> None:
+        if (
+            self.early_route_selection
+            and qid is not None
+            and not cand.route_selected
+            and detection.fires()
+            and not detection.error
+        ):
+            cand.route_selected = self.host.classify_held(qid, cand.text, detection)
 
     async def change_language(self, language: str) -> None:
         """Finish cancellation before a new recognition generation can deliver text."""
@@ -1196,7 +1231,11 @@ class TurnDetector:
                 # A segment-final may cover only the beginning of an existing interim.
                 # Do not truncate its uncommitted tail before the utterance flush.
                 return False
-        return bool(final) and materially_changed(cand.text, final)
+        # A selected route has already built the typed request that normal release would
+        # build from the final string. Even case/punctuation must retain that exact input.
+        return bool(final) and (
+            cand.text != final if cand.route_selected else materially_changed(cand.text, final)
+        )
 
     async def _decide(self, turn: _Turn, cand: _Candidate) -> tuple[_Candidate, Detection]:
         """The detector's decision for the turn's newest text, with at most one call in flight:
@@ -1234,6 +1273,7 @@ class TurnDetector:
                 if (
                     turn.held_qid is not None
                     and not turn.late_recovery_used
+                    and not cand.route_selected
                     and self._extends(cand.text, final)
                 ):
                     cand.detection.cancel()
@@ -1287,11 +1327,14 @@ class TurnDetector:
         early, turn.early = turn.early, None
         early_longer = False
         if early is not None and (
-            not self.utterance() or materially_changed(early.cand.text, self.utterance())
+            not self.utterance()
+            or (early.cand.route_selected and early.cand.text != self.utterance())
+            or materially_changed(early.cand.text, self.utterance())
         ):
             if (
                 self.utterance()
                 and early.held is not None
+                and not early.cand.route_selected
                 and self._extends(early.cand.text, self.utterance())
             ):
                 early_longer = True  # a few more words: keep its pass, decide again
@@ -1350,12 +1393,15 @@ class TurnDetector:
                     if detection.decision != "wait" or not self._carry(turn):
                         self._done(turn)
                     return
+                if not turn.taken and turn.cand is cand and self._text(turn) == cand.text:
+                    self._classify_held(cand, turn.held_qid, detection)
                 await self._wait_release(turn)
                 await self._require_late_quiet(turn)
                 if self._changed(turn, cand) and (
                     self.committed_final_recheck
                     or turn.late_recovery_used
                     or self.early_final_release
+                    or cand.route_selected
                     or not self._extends(cand.text, self._text(turn))
                 ):
                     self._withdraw_shown(turn)
@@ -1372,6 +1418,7 @@ class TurnDetector:
                 if self._changed(turn, cand) and (
                     self.committed_final_recheck
                     or turn.late_recovery_used
+                    or cand.route_selected
                     or not self._extends(cand.text, self._text(turn))
                 ):
                     self._withdraw_shown(turn)
@@ -1387,7 +1434,11 @@ class TurnDetector:
                 self._done(turn)
                 return
         except (asyncio.CancelledError, _LateRecoveryExpired) as exc:
-            if self.committed_final_recheck or turn.late_recovery_used:
+            if (
+                self.committed_final_recheck
+                or turn.late_recovery_used
+                or self.early_route_selection
+            ):
                 cand = turn.cand or cand  # _decide may be awaiting a replacement candidate.
             if cand is not None and not turn.taken:
                 cand.cancel()

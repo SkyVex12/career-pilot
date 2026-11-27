@@ -438,6 +438,19 @@ def scenarios(cycles: int = 8) -> list[dict[str, Any]]:
         "and regional failover?"
     )
     return [
+        {
+            "id": "punctuated-route-technical-600",
+            "actions": [
+                {
+                    "op": "partial",
+                    "text": "Which programming languages do you use most often?",
+                    "start": True,
+                },
+                {"op": "pause", "seconds": 0.6},
+                {"op": "end"},
+                {"op": "settle"},
+            ],
+        },
         *[
             {
                 "id": f"stable-{category}-{lead_ms}",
@@ -1172,37 +1185,50 @@ def replay_settings(live: bool, strategy: str) -> Settings:
 
 
 TURN_EXPERIMENTS = {
+    "routing": {
+        "early_route_selection": True,
+        "early_stable_partial_ms": None,
+        "early_final_release": False,
+        "committed_final_recheck": False,
+        "late_first_text_recovery_ms": None,
+    },
     "baseline": {
+        "early_route_selection": False,
         "early_stable_partial_ms": None,
         "early_final_release": False,
         "committed_final_recheck": False,
         "late_first_text_recovery_ms": None,
     },
     "stable": {
+        "early_route_selection": False,
         "early_stable_partial_ms": 250,
         "early_final_release": False,
         "committed_final_recheck": False,
         "late_first_text_recovery_ms": None,
     },
     "final": {
+        "early_route_selection": False,
         "early_stable_partial_ms": None,
         "early_final_release": True,
         "committed_final_recheck": False,
         "late_first_text_recovery_ms": None,
     },
     "combined": {
+        "early_route_selection": False,
         "early_stable_partial_ms": 250,
         "early_final_release": True,
         "committed_final_recheck": False,
         "late_first_text_recovery_ms": None,
     },
     "committed": {
+        "early_route_selection": False,
         "early_stable_partial_ms": None,
         "early_final_release": False,
         "committed_final_recheck": True,
         "late_first_text_recovery_ms": None,
     },
     "recovery": {
+        "early_route_selection": False,
         "early_stable_partial_ms": None,
         "early_final_release": False,
         "committed_final_recheck": False,
@@ -1296,6 +1322,7 @@ async def execute_owned(
         turn_experiments={
             label: setting.model_dump(
                 include={
+                    "early_route_selection",
                     "early_stable_partial_ms",
                     "early_final_release",
                     "committed_final_recheck",

@@ -133,6 +133,9 @@ class Settings(CoreSettings):
     early_decision_interval_ms: int | None = 700
     # The early decision in interviews too, not only standups and meetings (2026-11-16).
     early_decision_all_modes: bool = True
+    # Apply completed classification to a hidden generation before its display floor.
+    # Reuses existing route policy; no early exposure or new detector call. False rolls back.
+    early_route_selection: bool = Field(default_factory=_openai_only)
     # Experimental hidden drafts from unchanged, unpunctuated question partials.
     # Keep disabled until speech replays establish accuracy and cancellation overhead.
     early_stable_partial_ms: int | None = Field(default=None, ge=100, le=2000)

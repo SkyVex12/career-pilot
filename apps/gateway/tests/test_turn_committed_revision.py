@@ -83,6 +83,9 @@ class Host:
     def discard_question(self, qid: UUID) -> None:
         self.discarded.append(qid)
 
+    def classify_held(self, qid: UUID, text: str, detection: Detection) -> bool:
+        return False
+
     def retime_held(self, qid: UUID, t0: float) -> None:
         pass
 
