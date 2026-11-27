@@ -667,3 +667,19 @@ def test_turn_experiments_are_distinct_and_preserve_model_configuration():
         v.late_first_text_recovery_ms is None for k, v in variants.items() if k != "B:recovery"
     )
     assert len({s.openai_fast_model for s in variants.values()}) == 1
+
+
+def test_hidden_routing_variant_changes_only_route_selection_timing():
+    from argparse import Namespace
+
+    from copilot_evals.live_answer_session_replay import session_variants
+
+    variants = session_variants(
+        Namespace(live=False, architectures=["B"], turn_experiments=["baseline", "routing"])
+    )
+    baseline, candidate = variants["B:baseline"], variants["B:routing"]
+    assert not baseline.early_route_selection
+    assert candidate.early_route_selection
+    assert baseline.model_dump(exclude={"early_route_selection"}) == candidate.model_dump(
+        exclude={"early_route_selection"}
+    )

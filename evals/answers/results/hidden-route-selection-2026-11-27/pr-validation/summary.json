@@ -1,0 +1,375 @@
+{
+  "scope": "Controlled synthetic provider/detector timing through production Session/TurnDetector/AnswerEngine and localhost websocket; not real provider latency, audio/STT latency, paint latency, or a quality judge",
+  "controls": {
+    "provider_first_chunk_ms": 400,
+    "provider_tail_ms": 650,
+    "detector_ms": 80,
+    "punctuated_partial_lead_ms": 500,
+    "speculative_gate_ms": 300,
+    "silence_gate_ms": 400,
+    "first_show_min_words": 8,
+    "deep_pass_auto": false,
+    "settings_changed_between_arms": [
+      "early_route_selection"
+    ],
+    "fast_model": "gpt-6-luna",
+    "expert_model": "gpt-6.1-sol"
+  },
+  "quality_checks": "Exact full intended LLMRequest, model, inference params, fictional evidence/profile, output and preference identity; one public primary, no pre-end answer, retained provisional cancellation, no lifecycle violations",
+  "pairs": [
+    {
+      "pair": 1,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 718,
+      "candidate_ms": 297,
+      "saved_ms": 421,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 1,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 735,
+      "candidate_ms": 297,
+      "saved_ms": 438,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 1,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 297,
+      "candidate_ms": 297,
+      "saved_ms": 0,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 2,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 297,
+      "saved_ms": 406,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 2,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 297,
+      "candidate_ms": 328,
+      "saved_ms": -31,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 2,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 297,
+      "saved_ms": 406,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 3,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 313,
+      "candidate_ms": 313,
+      "saved_ms": 0,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 3,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 328,
+      "saved_ms": 375,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 3,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 687,
+      "candidate_ms": 297,
+      "saved_ms": 390,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 4,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 297,
+      "saved_ms": 406,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 4,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 297,
+      "saved_ms": 406,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 4,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 312,
+      "candidate_ms": 313,
+      "saved_ms": -1,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 5,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 719,
+      "candidate_ms": 312,
+      "saved_ms": 407,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 5,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 329,
+      "candidate_ms": 313,
+      "saved_ms": 16,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 5,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 734,
+      "candidate_ms": 297,
+      "saved_ms": 437,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 6,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 328,
+      "candidate_ms": 297,
+      "saved_ms": 31,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 6,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 688,
+      "candidate_ms": 297,
+      "saved_ms": 391,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 6,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 719,
+      "candidate_ms": 297,
+      "saved_ms": 422,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 7,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 719,
+      "candidate_ms": 312,
+      "saved_ms": 407,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 7,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 312,
+      "saved_ms": 391,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 7,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "candidate",
+        "baseline"
+      ],
+      "baseline_ms": 313,
+      "candidate_ms": 313,
+      "saved_ms": 0,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 8,
+      "case": "technical-deep-to-expert",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 703,
+      "candidate_ms": 312,
+      "saved_ms": 391,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 8,
+      "case": "unchanged-other-light-control",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 297,
+      "candidate_ms": 297,
+      "saved_ms": 0,
+      "identical_primary_request": true,
+      "identical_output": true
+    },
+    {
+      "pair": 8,
+      "case": "technical-light-to-legacy",
+      "order": [
+        "baseline",
+        "candidate"
+      ],
+      "baseline_ms": 735,
+      "candidate_ms": 312,
+      "saved_ms": 423,
+      "identical_primary_request": true,
+      "identical_output": true
+    }
+  ],
+  "summary": [
+    {
+      "case": "technical-light-to-legacy",
+      "pairs": 8,
+      "targeted_route_change": true,
+      "baseline_ms": 710.5,
+      "candidate_ms": 297.0,
+      "saved_ms": 406.5,
+      "minimum_saved_ms": 375,
+      "maximum_saved_ms": 437
+    },
+    {
+      "case": "technical-deep-to-expert",
+      "pairs": 8,
+      "targeted_route_change": true,
+      "baseline_ms": 703.0,
+      "candidate_ms": 297.0,
+      "saved_ms": 406.0,
+      "minimum_saved_ms": 390,
+      "maximum_saved_ms": 438
+    },
+    {
+      "case": "unchanged-other-light-control",
+      "pairs": 8,
+      "targeted_route_change": false,
+      "baseline_ms": 312.5,
+      "candidate_ms": 313.0,
+      "saved_ms": 0.0,
+      "minimum_saved_ms": -31,
+      "maximum_saved_ms": 31
+    }
+  ],
+  "source_sha256": {
+    "apps/gateway/src/copilot_gateway/turn.py": "c86900142381160bacd67b85d38b82f0604d6eb86cbffa2543db93b7da2de35d",
+    "apps/gateway/src/copilot_gateway/session.py": "da703a81dbd4fa2f0d3e2a20f2abdc73df31f72702bcc081d56a031880424ba2",
+    "apps/gateway/src/copilot_gateway/answer.py": "312f96f5e8575b074c2ad5c41e53670c7fff3a107038b731e8f8bb7fdfe9c551",
+    "apps/gateway/src/copilot_gateway/config.py": "501ff61b9de6d78aa2fa81bdf7ab8e4616d313e5307d8514c78776832645f674",
+    "apps/gateway/src/copilot_gateway/adaptive.py": "d10f6194309df5ed4bae2a1e4d6381f3d2d38014478a37b99c5cd4f49715a8dc",
+    "apps/gateway/src/copilot_gateway/router.py": "bdd631f41354c0182b199587c0d8808dc0be8ffac1b4fa8d2962fb178f35b50c",
+    "evals/src/copilot_evals/live_answer_session_replay.py": "28ca019ee89e04ebe80fcba1cd750c681ae95cc146d3ea9c003934beb013e16b",
+    "evals/bench/hidden_route_selection.py": "2a8c342f95b09efcbd791a43a18e75b130ad25b7ec0df1fd251aeef01ee3827e"
+  }
+}

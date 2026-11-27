@@ -364,6 +364,7 @@ class Session:
             keep_added_words=self.settings.held_keep_added_words,
             strict_extensions=self.settings.answer_architecture != "legacy_dual",
             early_all_modes=self.settings.early_decision_all_modes,
+            early_route_selection=self.settings.early_route_selection,
             early_stable_partial_ms=self.settings.early_stable_partial_ms,
             early_final_release=self.settings.early_final_release,
             committed_final_recheck=self.settings.committed_final_recheck,
@@ -1194,6 +1195,72 @@ class Session:
         self._remember_automatic(q.qid, text, t0=t0)
         self.answers.add(q)
         return q.qid
+
+    def classify_held(self, qid: UUID, text: str, detection: Detection) -> bool:
+        """Start an already-required route replacement while its answer stays hidden.
+        Unchanged generations keep their original classification until normal release:
+        updating it here could otherwise change a request still awaiting its evidence.
+        """
+        q = self.answers.questions.get(qid)
+        if (
+            q is None
+            or self.ending
+            or self.lost
+            or self.answers._closing  # pyright: ignore[reportPrivateUsage]
+            or not q.held
+            or q.exposed
+            or q.answer_exposed
+            or q.confirmed
+            or q.forced
+            or q.cancelled
+            or q.discarded
+            or q.superseded
+            or q.released.is_set()
+            or "fast" not in q.snapshots
+            or "fast" not in q.preferences
+            or not detection.fires()
+            or detection.error
+            or q.text != self._continued(text)
+        ):
+            return False
+        original = (
+            q.qtype,
+            q.confidence,
+            q.addressed,
+            q.detector_ms,
+            q.decided_ms,
+            q.depth,
+            q.detected_at,
+        )
+        q.qtype = detection.qtype
+        q.confidence = DETECTED_CONFIDENCE
+        q.addressed = True
+        q.detector_ms = detection.latency_ms
+        q.decided_ms = detection.decided_ms
+        q.depth = detection.depth
+        q.detected_at = datetime.now(UTC)
+        replaced = False
+        try:
+            replacement = self.answers.reconcile_strategy(q)
+            replaced = replacement is not q
+            if replaced:
+                replacement.hidden_classified = True
+                replacement.hidden_original = q.hidden_original or (
+                    self.answers.strategy(q),
+                    q.plans.get("fast"),
+                )
+            return replaced
+        finally:
+            if not replaced:
+                (
+                    q.qtype,
+                    q.confidence,
+                    q.addressed,
+                    q.detector_ms,
+                    q.decided_ms,
+                    q.depth,
+                    q.detected_at,
+                ) = original
 
     def release_question(
         self, qid: UUID, text: str, detection: Detection, *, speculative: bool
@@ -2796,6 +2863,10 @@ class Session:
         reply = respond and self.info.mode in prompts.GROUP_MODES
         # The first detection identifies the button anchor before held text is released.
         q.forced, q.confidence, q.detector_ms = True, 1.0, None
+        if q.hidden_classified:
+            # A forced reply owns its original provisional policy, not an early
+            # automatic classification whose text has never been exposed.
+            self.answers.reconcile_strategy(q, restore_provisional=True)
         self.release_question(qid, text, Detection("answer", "respond" if reply else "other"),
                               speculative=False)  # fmt: skip
         wait_s = self.settings.force_type_wait_ms / 1000

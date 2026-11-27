@@ -170,7 +170,7 @@ def experimental_engine(lab: RoutingLab) -> type[AnswerEngine]:
     class ExperimentalEngine(AnswerEngine):
         _routing_lab = lab
 
-        def reconcile_strategy(self, q: Question) -> Question:
+        def reconcile_strategy(self, q: Question, *, restore_provisional: bool = False) -> Question:
             # This historical lab isolates its in-flight request-plan hook. Production
             # pre-answer generation replacement is covered by the actual Session tests
             # in test_technical_legacy_policy, without this experimental subclass.

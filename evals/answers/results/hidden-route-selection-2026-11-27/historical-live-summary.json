@@ -1,0 +1,1686 @@
+{
+  "schema": 1,
+  "date": "2026-11-27",
+  "scope": "Real detector and answer providers through production Session/TurnDetector/AnswerEngine and localhost websocket; fictional text injected as synthetic STT.",
+  "completed_sessions": 8,
+  "pairs": [
+    {
+      "scenario": "punctuated-route-technical-600",
+      "run_id": "main",
+      "rep": 0,
+      "baseline_ms": 1046,
+      "candidate_ms": 594,
+      "saved_ms": 452,
+      "identical_primary_request_model_params_budget": true
+    },
+    {
+      "scenario": "punctuated-route-technical-600",
+      "run_id": "main",
+      "rep": 1,
+      "baseline_ms": 1172,
+      "candidate_ms": 890,
+      "saved_ms": 282,
+      "identical_primary_request_model_params_budget": true
+    },
+    {
+      "scenario": "stable-easy-100",
+      "run_id": "main",
+      "rep": 0,
+      "baseline_ms": 1688,
+      "candidate_ms": 1125,
+      "saved_ms": 563,
+      "identical_primary_request_model_params_budget": true
+    },
+    {
+      "scenario": "stable-easy-100",
+      "run_id": "control_completion",
+      "rep": 0,
+      "baseline_ms": 1297,
+      "candidate_ms": 1969,
+      "saved_ms": -672,
+      "identical_primary_request_model_params_budget": true
+    }
+  ],
+  "summary": [
+    {
+      "scenario": "punctuated-route-technical-600",
+      "pairs": 2,
+      "baseline_ms": 1109.0,
+      "candidate_ms": 742.0,
+      "saved_ms": 367.0
+    },
+    {
+      "scenario": "stable-easy-100",
+      "pairs": 2,
+      "baseline_ms": 1492.5,
+      "candidate_ms": 1547.0,
+      "saved_ms": -54.5
+    }
+  ],
+  "quality_checks": "All eight completed primary requests have identical paired model, full-request hash, effective inference-parameter hash and output limit. No pre-end answer events or lifecycle violations. Final emitted answers were spot-checked for consistency with the fictional profile; no blinded semantic quality evaluation.",
+  "limitations": [
+    "Only two pairs per scenario; not production percentiles or a broad quality noninferiority study.",
+    "Targeted scenario has a complete punctuated interim 600ms before synthetic speech end; real frequency of this opportunity is not measured.",
+    "Provider and detector timing varies. The negative control has one faster and one slower candidate; no consistent ordinary control improvement.",
+    "Primary request identity is exact. Dependent detail prompts contain the sampled primary answer and can differ across runs even with identical policy.",
+    "No real microphone, Deepgram recognition, remote retrieval, native transport, or WebView paint. Prewarming and follow-user are disabled by the harness.",
+    "Main run hit its $1 admission reservation cap: one session was budget-blocked and one was not started. A separate $0.50-capped run completed the missing control pair; failed/not-started outcomes are retained, excluded from paired latency.",
+    "Canceled calls retain unresolved cost reservations; known usage is not total billed cost."
+  ],
+  "trials": [
+    {
+      "run_id": "main",
+      "trial_id": "stable-easy-100:adaptive:baseline:0",
+      "scenario": "stable-easy-100",
+      "rep": 0,
+      "architecture": "adaptive:baseline",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1688,
+      "first_sentence_boundary_from_end_frame_ms": 1844,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 1063,
+          "detector_ms": 891,
+          "decided_ms": 1063,
+          "first_token_ms": 625,
+          "first_delta_ms": 1688,
+          "release_ms": 344,
+          "first_complete_sentence_ms": 1844,
+          "total_ms": 1969,
+          "final_ms": 172,
+          "first_shown": 1,
+          "start_ms": 1063,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 1063,
+          "router_first_chunk_ms": 625,
+          "stream_sentence_ms": 156,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "empty_card"
+        }
+      ],
+      "primary_output_sha256": "889e947ab3a34973565615422bc4bef8d5159e5abdd22eb6b1b0c9eb40de1b74",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 1.0470000000000255
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 0.9059999999999491
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "897f47be4418823944031916aeda54bdaf1c0731f364e3b1b3e90078fe9a4203",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.1089999999999236
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "stable-easy-100:adaptive:routing:0",
+      "scenario": "stable-easy-100",
+      "rep": 0,
+      "architecture": "adaptive:routing",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1125,
+      "first_sentence_boundary_from_end_frame_ms": 1250,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 500,
+          "detector_ms": 375,
+          "decided_ms": 500,
+          "first_token_ms": 610,
+          "first_delta_ms": 1125,
+          "release_ms": 342,
+          "first_complete_sentence_ms": 1250,
+          "total_ms": 1500,
+          "final_ms": 125,
+          "first_shown": 1,
+          "start_ms": 500,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 15,
+          "model_dispatch_ms": 515,
+          "router_first_chunk_ms": 610,
+          "stream_sentence_ms": 125,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "empty_card"
+        }
+      ],
+      "primary_output_sha256": "15496086dbe56d9f1a47c0e0a03f58def45363f4088f56142bfc804122a68a75",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.5149999999998727
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 0.9850000000001273
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "f5a9f9918349e171c958e211b381afe249d36a9ceea1110855805008728ac8d6",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.25
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "punctuated-route-technical-600:adaptive:routing:0",
+      "scenario": "punctuated-route-technical-600",
+      "rep": 0,
+      "architecture": "adaptive:routing",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 594,
+      "first_sentence_boundary_from_end_frame_ms": 719,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 405,
+          "detector_ms": 530,
+          "decided_ms": 0,
+          "first_token_ms": 657,
+          "first_delta_ms": 594,
+          "release_ms": 311,
+          "first_complete_sentence_ms": 719,
+          "total_ms": 811,
+          "final_ms": 125,
+          "early_ms": 594,
+          "start_ms": 0,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 0,
+          "router_first_chunk_ms": 657,
+          "stream_sentence_ms": 125,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "unexposed_held"
+        }
+      ],
+      "primary_output_sha256": "9a4fb3b2f6c5337c14a7c4899f64704659d8c72ef7b63ffe7e2103badb4876a1",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "30453ecf8bf2b89e3d6d91325f2ab8a83fa2176730f0c5a7792cc04d1c6938e7",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.5149999999998727
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 0.8600000000001273
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "fa47be4792eaff7fc7bc61b16c0184b0bebe0f88a0ed5ba399cf7ae7aee55288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.2040000000001783
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "punctuated-route-technical-600:adaptive:baseline:0",
+      "scenario": "punctuated-route-technical-600",
+      "rep": 0,
+      "architecture": "adaptive:baseline",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1046,
+      "first_sentence_boundary_from_end_frame_ms": 1156,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 389,
+          "detector_ms": 485,
+          "decided_ms": 0,
+          "first_token_ms": 735,
+          "first_delta_ms": 1030,
+          "release_ms": 295,
+          "first_complete_sentence_ms": 1139,
+          "total_ms": 1295,
+          "final_ms": 108,
+          "early_ms": 610,
+          "start_ms": 295,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 296,
+          "router_first_chunk_ms": 735,
+          "stream_sentence_ms": 109,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "unexposed_held"
+        }
+      ],
+      "primary_output_sha256": "8178cb5af3bd28456ff6864372c1d55bb3fe0961d8c9362498ec5619d402084a",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "30453ecf8bf2b89e3d6d91325f2ab8a83fa2176730f0c5a7792cc04d1c6938e7",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.8899999999998727
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.0
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "9e8ebc90a2ce7148b3a483ac035f86923983d35edc065145a6e376f4e315a181",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.2029999999999745
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "punctuated-route-technical-600:adaptive:baseline:1",
+      "scenario": "punctuated-route-technical-600",
+      "rep": 1,
+      "architecture": "adaptive:baseline",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1172,
+      "first_sentence_boundary_from_end_frame_ms": 1297,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 405,
+          "detector_ms": 407,
+          "decided_ms": 0,
+          "first_token_ms": 858,
+          "first_delta_ms": 1172,
+          "release_ms": 313,
+          "first_complete_sentence_ms": 1280,
+          "total_ms": 1405,
+          "final_ms": 125,
+          "early_ms": 594,
+          "start_ms": 313,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 313,
+          "router_first_chunk_ms": 859,
+          "stream_sentence_ms": 109,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "unexposed_held"
+        }
+      ],
+      "primary_output_sha256": "996c7cd9c3b2eef383a8711e1f87d0848d4a2fbe2132ba1dd21439df69dde793",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "30453ecf8bf2b89e3d6d91325f2ab8a83fa2176730f0c5a7792cc04d1c6938e7",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.9070000000001528
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.0929999999998472
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "fa47be4792eaff7fc7bc61b16c0184b0bebe0f88a0ed5ba399cf7ae7aee55288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.219000000000051
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "punctuated-route-technical-600:adaptive:routing:1",
+      "scenario": "punctuated-route-technical-600",
+      "rep": 1,
+      "architecture": "adaptive:routing",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 890,
+      "first_sentence_boundary_from_end_frame_ms": 1031,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 389,
+          "detector_ms": 750,
+          "decided_ms": 172,
+          "first_token_ms": 717,
+          "first_delta_ms": 889,
+          "release_ms": 297,
+          "first_complete_sentence_ms": 1014,
+          "total_ms": 1186,
+          "final_ms": 125,
+          "early_ms": 577,
+          "start_ms": 172,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 172,
+          "router_first_chunk_ms": 718,
+          "stream_sentence_ms": 125,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "unexposed_held"
+        }
+      ],
+      "primary_output_sha256": "69bcd22853d131835cc0e5cc233117992331d6487780326a245142bb0367c4f7",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "30453ecf8bf2b89e3d6d91325f2ab8a83fa2176730f0c5a7792cc04d1c6938e7",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.75
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.0149999999998727
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "37bb8ae6a39a998d7084f65997ae139c0befcb7a7b1f81df61effc2768039f4c",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.219000000000051
+        }
+      ]
+    },
+    {
+      "run_id": "main",
+      "trial_id": "stable-easy-100:adaptive:routing:1",
+      "scenario": "stable-easy-100",
+      "rep": 1,
+      "architecture": "adaptive:routing",
+      "status": "missing_final_answer",
+      "violations": [],
+      "first_delta_from_end_frame_ms": null,
+      "first_sentence_boundary_from_end_frame_ms": null,
+      "question_type": "other",
+      "detector_depth": null,
+      "primary": null,
+      "intended_request_identities": [],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [],
+      "primary_output_sha256": null,
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "BudgetBlocked",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": false,
+          "elapsed_s": 0.0
+        },
+        {
+          "model": "gpt-6.2-sol",
+          "status": "BudgetBlocked",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "ef7b366bdec11737b9e5595542a901094384767a682d7860d1cfb1e92f664eba",
+          "provider_invoked": false,
+          "elapsed_s": 0.0
+        }
+      ]
+    },
+    {
+      "run_id": "control_completion",
+      "trial_id": "stable-easy-100:adaptive:routing:0",
+      "scenario": "stable-easy-100",
+      "rep": 0,
+      "architecture": "adaptive:routing",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1969,
+      "first_sentence_boundary_from_end_frame_ms": 2078,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 1344,
+          "detector_ms": 1079,
+          "decided_ms": 1344,
+          "first_token_ms": 625,
+          "first_delta_ms": 1969,
+          "release_ms": 344,
+          "first_complete_sentence_ms": 2061,
+          "total_ms": 2219,
+          "final_ms": 250,
+          "first_shown": 1,
+          "start_ms": 1344,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 0,
+          "model_dispatch_ms": 1344,
+          "router_first_chunk_ms": 625,
+          "stream_sentence_ms": 93,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "empty_card"
+        }
+      ],
+      "primary_output_sha256": "18a18f18b2c8aab030950d67a54402d344abb30114de5111add45d022a33f9af",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 1.344000000000051
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 0.875
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "545cdd51fb177009db9b2774552bd036224e1bd2e2b0881cf3cc06f7ea8378e0",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.6709999999998217
+        }
+      ]
+    },
+    {
+      "run_id": "control_completion",
+      "trial_id": "stable-easy-100:adaptive:baseline:0",
+      "scenario": "stable-easy-100",
+      "rep": 0,
+      "architecture": "adaptive:baseline",
+      "status": "completed",
+      "violations": [],
+      "first_delta_from_end_frame_ms": 1297,
+      "first_sentence_boundary_from_end_frame_ms": 1422,
+      "question_type": "technical",
+      "detector_depth": "light",
+      "primary": {
+        "model": "gpt-6-luna",
+        "answer_strategy": "legacy_dual",
+        "request_job": "fast",
+        "max_output_tokens": 250,
+        "latency_ms": {
+          "turn_end_ms": 530,
+          "detector_ms": 405,
+          "decided_ms": 516,
+          "first_token_ms": 766,
+          "first_delta_ms": 1297,
+          "release_ms": 327,
+          "first_complete_sentence_ms": 1422,
+          "total_ms": 1985,
+          "final_ms": 110,
+          "first_shown": 1,
+          "start_ms": 516,
+          "context_wait_ms": 0,
+          "prompt_build_ms": 0,
+          "cache_lookup_ms": 0,
+          "answer_prepare_ms": 15,
+          "model_dispatch_ms": 531,
+          "router_first_chunk_ms": 766,
+          "stream_sentence_ms": 125,
+          "sentence_release_wait_ms": 0,
+          "provider": "openai",
+          "fallback_attempt": 0,
+          "stop_reason": "end_turn",
+          "answer_strategy": "legacy_dual",
+          "prompt_version": null,
+          "answer_style": "bullets",
+          "response_length": "default",
+          "answer_depth": null,
+          "question_type_at_start": "technical",
+          "detector_depth_at_start": "light",
+          "detector_depth_at_completion": "light",
+          "configured_reasoning": {
+            "reasoning": {
+              "effort": "none"
+            }
+          },
+          "request_job": "fast",
+          "max_output_tokens": 250
+        }
+      },
+      "intended_request_identities": [
+        {
+          "model": "gpt-6-luna",
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "output_limit": 250
+        }
+      ],
+      "pre_end_answer_events": 0,
+      "pending_after_close": 0,
+      "writer_pending_after_close": false,
+      "route_replacements": [
+        {
+          "previous_strategy": "adaptive",
+          "answer_strategy": "legacy_dual",
+          "reason": "empty_card"
+        }
+      ],
+      "primary_output_sha256": "f057cbe3a98ea094b6ac1fc24547d45fc018d9e75d90ea2c4fbd8d8895183ead",
+      "answer_requests": [
+        {
+          "model": "gpt-6.2-sol",
+          "status": "CancelledError",
+          "output_limit": 400,
+          "request_sha256": "952224d52723861e30701d3015ca6c3f968a08288851aeb20b52caa2092c4be4",
+          "params_sha256": "653fc0047f731fcd99043b8b003450e61df7bfae3319a6af4c621a532c728938",
+          "provider_invoked": true,
+          "elapsed_s": 0.5149999999998727
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 250,
+          "request_sha256": "507c4d06356432448291f73875aaf4675ba250b3f606efd4d728dd5eb2bd0288",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.4540000000001783
+        },
+        {
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "output_limit": 800,
+          "request_sha256": "0b66a5ce5759419ec5d528ff8a1913e0e0d4cfd20294e5a71b9548ae4d130cc7",
+          "params_sha256": "556fa3721bd8e30e0c52250a902952bf3f8739c8f4a723d2a5ff1746ee5ec751",
+          "provider_invoked": true,
+          "elapsed_s": 1.4839999999999236
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "run_id": "main",
+      "private_directory": "C:\\Users\\A\\AppData\\Local\\Temp\\career-pilot-hidden-route-20261127-live-01",
+      "summary": {
+        "status": "partial",
+        "live": true,
+        "checkpoint_policy": "atomic-records-async-request-fence-v2",
+        "planned_sessions": 8,
+        "sessions": 7,
+        "dispatch_states": {
+          "completed": 7,
+          "not_started": 1
+        },
+        "remaining_sessions": 1,
+        "ambiguous_sessions": 0,
+        "circuit_reason": null,
+        "statuses": {
+          "completed": 6,
+          "missing_final_answer": 1
+        },
+        "invariant_violations": 0,
+        "provider_dispatches": 27,
+        "request_intents": 31,
+        "peak_provider_inflight": 4,
+        "known_usage_usd": 0.002016,
+        "observed_cost_usd": null,
+        "unresolved_reserved_usd": 0.99732,
+        "usage_source": "provider-reported",
+        "completion_scope": "Replay protocol completion; not semantic answer completeness or quality",
+        "admission_scope": {
+          "max_sessions": 1,
+          "max_provider_inflight": 4,
+          "includes": [
+            "answer streams",
+            "Responses detector",
+            "Decisions detector",
+            "retries"
+          ],
+          "cost_reserved_after_admission": true,
+          "queued_time_counts_toward_router_deadline": true,
+          "immediate_rate_auth_stop": true,
+          "per_request_queue_wait_ms": null,
+          "circuit_scope": "completed sessions; bounded existing provider retry routes"
+        },
+        "cost_statuses": {
+          "reserved": 9,
+          "usage": 18
+        }
+      },
+      "budget_limit_usd": 1.0,
+      "settings": {
+        "llm_providers": [
+          "openai"
+        ],
+        "haiku_model": "claude-haiku-4-5",
+        "sonnet_model": "claude-sonnet-5-5",
+        "bedrock_haiku_model": "anthropic.claude-haiku-4-5",
+        "bedrock_sonnet_model": "anthropic.claude-sonnet-5-5",
+        "openai_fast_model": "gpt-6-luna",
+        "openai_deep_model": "gpt-6.1-sol",
+        "openai_fast_reasoning": "none",
+        "openai_deep_reasoning": "low",
+        "openai_reasoning_headroom_tokens": 2048,
+        "openai_first_token_timeout_ms": 3000,
+        "openai_deep_first_token_timeout_ms": 6000,
+        "llm_keepalive_s": 120.0,
+        "llm_connect_timeout_s": 2.0,
+        "openai_http2": true,
+        "openai_http2_cancel_fix": true,
+        "model_prices": {
+          "claude-haiku-4-5": {
+            "input": 1.0,
+            "cached": 0.1,
+            "output": 5.0
+          },
+          "claude-sonnet-5-5": {
+            "input": 2.0,
+            "cached": 0.2,
+            "output": 10.0
+          },
+          "claude-sonnet-5": {
+            "input": 2.0,
+            "cached": 0.2,
+            "output": 10.0
+          },
+          "claude-opus-5-5": {
+            "input": 4.0,
+            "cached": 0.2,
+            "output": 20.0
+          },
+          "gpt-6.2-sol": {
+            "input": 2.0,
+            "cached": 0.1,
+            "output": 10.0
+          },
+          "gpt-6-luna": {
+            "input": 0.1,
+            "cached": 0.01,
+            "output": 0.5
+          },
+          "gpt-6.1-sol": {
+            "input": 2.0,
+            "cached": 0.1,
+            "output": 10.0
+          },
+          "gpt-6-astra": {
+            "input": 10.0,
+            "cached": 1.0,
+            "output": 50.0
+          }
+        },
+        "tier_price_multipliers": {
+          "standard": 1.0,
+          "priority": 1.75,
+          "flex": 0.5,
+          "batch": 0.5,
+          "gpt-6-astra:ultrafast": 6.0,
+          "gpt-6.1-sol:ultrafast": 6.0,
+          "gpt-6.2-sol:ultrafast": 3.0,
+          "gpt-6.2-astra:ultrafast": 3.0,
+          "gpt-6-luna:fast": 2.0,
+          "gpt-6-luna:priority": 2.0,
+          "gpt-6-sol:fast": 2.0,
+          "gpt-6-sol:priority": 2.0,
+          "gpt-6.1-sol:fast": 2.0,
+          "gpt-6.1-sol:priority": 2.0,
+          "gpt-6-astra:fast": 2.0,
+          "gpt-6-astra:priority": 2.0,
+          "gpt-6.2-sol:fast": 2.0,
+          "gpt-6.2-sol:priority": 2.0,
+          "gpt-6.2-astra:fast": 2.0,
+          "gpt-6.2-astra:priority": 2.0
+        },
+        "first_show_min_words": 8,
+        "fast_hedge_ms": 1200,
+        "openai_fast_retry_tier": "priority",
+        "openai_fast_service_tier": null,
+        "openai_deep_service_tier": "ultrafast",
+        "deep_hedge_ms": 4500,
+        "openai_deep_retry_tier": "priority",
+        "adaptive_failure_recovery": false,
+        "adaptive_expert_route": {
+          "model": "gpt-6.2-sol",
+          "reasoning": "low",
+          "service_tier": "ultrafast",
+          "retry_tier": "fast",
+          "first_token_timeout_ms": 20000,
+          "hedge_ms": null
+        },
+        "adaptive_technical_legacy": true,
+        "adaptive_interview_grounding": true,
+        "adaptive_max_tokens": 1200,
+        "adaptive_stream_idle_timeout_s": 30.0,
+        "adaptive_stream_total_timeout_s": 90.0,
+        "fast_pass_max_tokens": 250,
+        "fast_pass_priority": false,
+        "deep_pass_max_tokens": 800,
+        "deep_pass_auto": true,
+        "deep_routing": "by_need",
+        "deep_pass_auto_types": [
+          "behavioral",
+          "technical",
+          "system_design",
+          "coding",
+          "standup_status",
+          "other",
+          "respond",
+          "follow",
+          "decision",
+          "how_it_works",
+          "status_follow_up",
+          "estimate_risk"
+        ],
+        "first_token_timeout_ms": 1500,
+        "bedrock_haiku_retry_model": null,
+        "bedrock_sonnet_retry_model": null,
+        "deep_pass_thinking": "between_tools",
+        "deep_pass_effort": "low",
+        "bedrock_refusal_model": "anthropic.claude-sonnet-5"
+      },
+      "turn_settings": {
+        "openai_detector_model": "gpt-6-luna",
+        "openai_summary_model": null,
+        "openai_detector_reasoning": "none",
+        "openai_summary_reasoning": null,
+        "silence_timer_ms": 400,
+        "speculative_start_ms": 300,
+        "speculative_hold": true,
+        "speculative_min_words": 3,
+        "early_decision_interval_ms": 700,
+        "early_decision_all_modes": true,
+        "detector_max_tokens": 80,
+        "detector_api": "decisions",
+        "detector_hedge_ms": 1200,
+        "openai_detector_retry_tier": "priority",
+        "name_address_grace_ms": 1000,
+        "conversation_summary_tokens": 500,
+        "conversation_summary_chunk_tokens": 500,
+        "conversation_summary_retry_s": 30.0,
+        "detector_context_tokens": 300,
+        "final_wait_max_ms": 1500,
+        "follow_user": false,
+        "continuation_gap_ms": 5000,
+        "stt_stall_s": 30.0,
+        "flush_interval_s": 600.0
+      },
+      "turn_experiments": {
+        "B:baseline": {
+          "early_route_selection": false,
+          "early_stable_partial_ms": null,
+          "early_final_release": false,
+          "committed_final_recheck": false,
+          "late_first_text_recovery_ms": null
+        },
+        "B:routing": {
+          "early_route_selection": true,
+          "early_stable_partial_ms": null,
+          "early_final_release": false,
+          "committed_final_recheck": false,
+          "late_first_text_recovery_ms": null
+        }
+      },
+      "git_head": "8aa45aa3cff1c2ab8d43461603b5de9249031023",
+      "source_sha256": {
+        "apps/gateway/src/copilot_gateway/__init__.py": "3824deb64b93acd21d3321e794eb1b214264004466aaa51a0f4c70d3984a386f",
+        "apps/gateway/src/copilot_gateway/adaptive.py": "1382a3732bbef0e7df4e5fbf2a83e8c82781c16a8327de23ac58ea98dad7f638",
+        "apps/gateway/src/copilot_gateway/admission.py": "06aa5c84639f4c83c586904266505d7047062344465bd55b4508e3423b621a7d",
+        "apps/gateway/src/copilot_gateway/answer.py": "e036191831ad34a6e6d1e464f44f88d7f8d0c1160a623f746cfaaf2696ebd431",
+        "apps/gateway/src/copilot_gateway/audio.py": "7604b4c5f607a9af60b7bf22629217af3acfc6a769ab671771af3865c0798338",
+        "apps/gateway/src/copilot_gateway/auth.py": "da0a5e9f8a130fa0ce7dcaf563742ff768418496b81b5f719d571971704b2f25",
+        "apps/gateway/src/copilot_gateway/companionhost.py": "4cd43d3c1a14d309774d9fd426db17d5d8e2111e06167aa436e5654ffd791e48",
+        "apps/gateway/src/copilot_gateway/companionrelay.py": "e863a7fda912ffb4543e99c30a7bfd6f49e88214784e5bc64e019c1c66942c5b",
+        "apps/gateway/src/copilot_gateway/config.py": "3ac1b7a99c5341623b2ed08755387cf14230504d800eb4688ca2719e450f8ea9",
+        "apps/gateway/src/copilot_gateway/conversation.py": "0720f63c26f3de15a076fa5fb311a4a023c10b7cd004cf7459190d7dd7f204c1",
+        "apps/gateway/src/copilot_gateway/detector.py": "f6ea4af1e1cb90ce7b79e5843e096a04d7c5654447c75893b4635bc592e6e6aa",
+        "apps/gateway/src/copilot_gateway/main.py": "b08cdcfe19a3440aee44e04a53b29997cf27eb72d297bc8cc6ea310864265f9d",
+        "apps/gateway/src/copilot_gateway/metering.py": "7dd41ce9d4c849ed962ec95c87a01be126ec429ea2a6bf8ed2f3e4200fcb7a04",
+        "apps/gateway/src/copilot_gateway/offline.py": "2c8180b8e46df871957d1821f6b4c861ba9a3dbb6fe7129dc1b86a197193e656",
+        "apps/gateway/src/copilot_gateway/retrieval.py": "c7c9a0bec5d1af35ab74dc779ff719e217629dfe3d25fd14336520748ff93ced",
+        "apps/gateway/src/copilot_gateway/router.py": "a7b553aefd9b1a8a1cff558cc8964f28cec5849369bca2ea067ca5f04a368a9e",
+        "apps/gateway/src/copilot_gateway/seathost.py": "f94d73b6c4c112f9356a679c5fb2c53714a0b5db646f3ee568e952cb150fbd72",
+        "apps/gateway/src/copilot_gateway/seatrelay.py": "876f38fdd2f9a585e4ab759aefd4f3f5736d75511449d5d868500165be2a1e8e",
+        "apps/gateway/src/copilot_gateway/seatview.py": "10c37f1f9b0a2b679f92aa9a1e561c55d0acf4c1a586a1c1e9e1cf729897b72f",
+        "apps/gateway/src/copilot_gateway/session.py": "4bf8c6bb7af3907c6bb5aa7137a9da40592e4b809657a24b25c08b7eb53ea9c1",
+        "apps/gateway/src/copilot_gateway/store.py": "1077bd3fb9a2d079c20d007f3690966e65b7943e01cde4a985b64d8d5cfa5fbe",
+        "apps/gateway/src/copilot_gateway/stt/__init__.py": "707dd6a48507e3b05c249092fa2e4ff95062443514102da0b74c7b9878f5a602",
+        "apps/gateway/src/copilot_gateway/stt/base.py": "9dc86e9ca7e43121bab058c914ac62fa80d88f49bf8c7f38c6325c1a700c4a9c",
+        "apps/gateway/src/copilot_gateway/stt/deepgram.py": "ef6ce30e0fedd9e091ec00f9d3098b05e6f2e934a59de334d327e186f35dc7fe",
+        "apps/gateway/src/copilot_gateway/stt/resilient.py": "57b6081a71ea75c74658bf8979b6e1e7d4dda705efe566d67419255b1a213b8f",
+        "apps/gateway/src/copilot_gateway/testing.py": "98f1ec1703d38fdfb0b4a04ed80f2f8ccb277616617a6f5448e620c45d7b2341",
+        "apps/gateway/src/copilot_gateway/turn.py": "9530cd257402374646d1cb35d24589404d8639cef48b54924df5201e8eb7b04d",
+        "packages/core/src/copilot_core/__init__.py": "6dcbddae494961b8ceb75d7c938fbc40d974d1a2cde9854519b5d73dcbfc539d",
+        "packages/core/src/copilot_core/_http2_cancel.py": "1be834ba85ad818f02882bd8e6bfe29b440df7089779ef61c6a58745ee60ca3c",
+        "packages/core/src/copilot_core/_openai_http.py": "7137d2b949c1792952d5ba0fe667f21c93780cc8e33cd352225915a445a8f3ba",
+        "packages/core/src/copilot_core/ask.py": "4b4c905b8982a175d4e2dc49ca281d0dcf4b263b73e1a91b300f0d2f9944559a",
+        "packages/core/src/copilot_core/auth.py": "962c41ed52bf484e1ae8d278bf30e8133465e349f4f7a124d6017799defea7e8",
+        "packages/core/src/copilot_core/aws.py": "04e3d38552e40ef48612304cd2c39c580ac5c89bd94af36a06a9c87a10210099",
+        "packages/core/src/copilot_core/calendars.py": "6740459de76d9c9fe9f407cd462f8f0843df92bc00f26be1c54877cea7b17d24",
+        "packages/core/src/copilot_core/call_language_text.py": "5443518012997b9546b8640aac117212de6216e534cbe31b38ea82a74968785c",
+        "packages/core/src/copilot_core/call_suggestions.py": "0dcf87fbcbea20c1ead7f25256f6439fcd60b87ca3cd8385af504b4c8302bd75",
+        "packages/core/src/copilot_core/careeros.py": "768ae2819fc27abf5fb39b0a39294084e2873ff9eb33d721557fbefe7f09d5ea",
+        "packages/core/src/copilot_core/companions.py": "d0d6917293818e7863e13139b7f025fe297f556aa56f2396e520a42f152215b5",
+        "packages/core/src/copilot_core/config.py": "5cf31727abac8e0b55bcfaf9b33551d09cfbab5dd58d5c500667041d27ee71c9",
+        "packages/core/src/copilot_core/crypto.py": "021b3a248c07d94abf62e301cdaaaaf82d7ef77b743f433a0b407d4ba6d9708b",
+        "packages/core/src/copilot_core/db.py": "175421aa814d65cfa72801554d9a442715b11921d6423d468e4a01039a7137e1",
+        "packages/core/src/copilot_core/dblogins.py": "435418c5333d72e9164d0cc21660b1f01b2ea1a450b4cfb99e01f7de7ff0d1af",
+        "packages/core/src/copilot_core/devroles.py": "964952a91e82a89d022a34f5528b0b8fc69746b74a3cd6d1fa3dfea98c814454",
+        "packages/core/src/copilot_core/dotenv.py": "3fe209eb85edb7804885f41a383c2cd37e6a848f641babba0f689f52bfcf8c5f",
+        "packages/core/src/copilot_core/emailkey.py": "ee3c4c048e7484f5db9e4ab3dbb6cb503a8fab3294e47b4e2e31a997104ffd8c",
+        "packages/core/src/copilot_core/embed.py": "9b39dd93e966d58cd8e281b87fe436123314cc93cce1192a218c8189c5326a50",
+        "packages/core/src/copilot_core/gcp.py": "d5e1317a0af9de8c9156f3152e6016ac645b5997aaf6a1a368d720ddb399541b",
+        "packages/core/src/copilot_core/identities.py": "26e28bbe48f02976a9a8d1bd5f0bf1927dca769601ac76881613f0393f67897f",
+        "packages/core/src/copilot_core/identity.py": "ed18915be73243cc6e9230415f0f0db063e5892311265437e7e37212db56cedd",
+        "packages/core/src/copilot_core/ids.py": "7659b13a433451540175102845c328e7cda12d7fc1fc481b6a76d5c3b6ef7cf1",
+        "packages/core/src/copilot_core/jobs.py": "26a6bce4e7419f2cfb8ed23492efeaa4f6b2db55e3884855a3d5576580c972ce",
+        "packages/core/src/copilot_core/keys.py": "092d10d69bad48c1ed38001cbe6c4c710bad54058163bd0406d08e5a2e14dcc4",
+        "packages/core/src/copilot_core/knowledge.py": "d711f8c5d5fc8308f6cf813c56bf46a443adc0fcd960553041b3f8c44b608761",
+        "packages/core/src/copilot_core/languages.py": "d40c59ebf2dfbdda575ce138af9e195e87e893f1e89ad4a6f993be8a0ad8c991",
+        "packages/core/src/copilot_core/livekit.py": "9af4c3865e9f7420d53b9d1643d8b6e25dc5778792012beceffd6ff3269875f7",
+        "packages/core/src/copilot_core/llm.py": "32a655af818be6dc0a73e38a78493c5973f55f8b2f80078b5da0f5e119e90c39",
+        "packages/core/src/copilot_core/logs.py": "8cd954aac8a5888a309b5b4a420fd8fa562b8b583118b7919a07d9295a1c34cb",
+        "packages/core/src/copilot_core/meeting_preparation.py": "a234332a7ecf56f8ad9f59002f7000a069d7ed589aba49910839915081c96460",
+        "packages/core/src/copilot_core/migrate.py": "91a8ac30d5085ebdba795e675e97c9095a508386afcacbabc8084cb581892daf",
+        "packages/core/src/copilot_core/operations.py": "9f49314c4cac160cc6afdaed830e4b4f163a5efe68680d92b076bb075c4d61c5",
+        "packages/core/src/copilot_core/pack_operations.py": "30cc59c29f3bc2cd3f4283f29340b25573db322cc1766aecd3f2c4b8a0e1e8bd",
+        "packages/core/src/copilot_core/packs.py": "ec71cc8e63cc3992ae2cf2851f1cd79e26203691230ceb5d109aadbecee12380",
+        "packages/core/src/copilot_core/personal_ai.py": "f2b2ed56477eba3e159f1407338e75d7eb6f76589bc3ee3885615a47b8e0a435",
+        "packages/core/src/copilot_core/practice.py": "36d73b49d48a809b865481f521b2458acecf34482c59f7a7093db0fca5b0003e",
+        "packages/core/src/copilot_core/pricing.py": "2e64880ac2fe0cac860bfc7fd9ed07fd2042a9ecc291bc8892d110bcc75cb25b",
+        "packages/core/src/copilot_core/profiles.py": "fd2d138661514a8fa6a0e573ae8b53122f157d29e0422e1edc4acb91aa391bdb",
+        "packages/core/src/copilot_core/prompts.py": "67fbd9cc4f334992ad0f1ff94b0edd11dfd7a14172dc1d9ce5c26ca762610306",
+        "packages/core/src/copilot_core/providers.py": "606606c88afea1caa11941d74811f7359cb0e7ca1ba8298d1d3b60d408d184af",
+        "packages/core/src/copilot_core/resumes.py": "1134b52113583b86ed607d7edf1d61a076580887ffc12d68d4497dade19d775c",
+        "packages/core/src/copilot_core/screen.py": "4959543eaa90c72127b1ab8b632b388a498e34e18a438ef580dc1c15eca88322",
+        "packages/core/src/copilot_core/seats.py": "0ab377f40fc78d19ce724966e85308f28bba7b5b011aa1dc6feb18f6778cc1e0",
+        "packages/core/src/copilot_core/session_writes.py": "7cd386089c36f5fc68b36c17b3207ba6fe2e8b019efe3756d15d7d79041a1851",
+        "packages/core/src/copilot_core/storage.py": "2c1daf12290c6b1a7536d5fa59e3f5963fbbc26097183d118c31769e07cd8852",
+        "packages/core/src/copilot_core/teststack.py": "d57f9fedda390068143f7bace72fed1f128893c54895f95b400424f09e236fb1",
+        "packages/core/src/copilot_core/usage.py": "985319161d1f64e4a0703d9fd21fec90a8bd17ae962593a39d00cd878aa9a466",
+        "packages/core/src/copilot_core/valkey_client.py": "2b1a8ed4fce35407a621b69f64cc5e7a9c5415c915fb7da3e98a016a073f5316",
+        "packages/core/src/copilot_core/versions.py": "37e77382089e0d35b6cdd595b9273627095aaadc056d095a4f2169976055467c",
+        "packages/core/src/copilot_core/workplace.py": "877805aebe870b716752660eaf3940c41e496392d965a9c706f6bc480e991083",
+        "packages/protocol/python/copilot_protocol/__init__.py": "30e6bc87289a636ca2137469a89b192b8fc39e8d366df9ee0efb03a880dbbbb3",
+        "packages/protocol/python/copilot_protocol/audio.py": "dd1583a4d903edfb7e0beb16c3862093062e02ba2e0ff5b858f380b90c8c3cdb",
+        "packages/protocol/python/copilot_protocol/models.py": "0e5d6c691b721f14e9448bcf35d272232dbf9c8c28b271977a2ceed6e829a40a",
+        "evals/src/copilot_evals/__init__.py": "fe066005a6da7cd71e4331719e8d0580611ae3ef8ba4cb5fc783b78c13f02a7e",
+        "evals/src/copilot_evals/answer_eval.py": "fdcc2ebcfa30efe3aeaa635712c6fa996ab76f3e6ef063fd30ce557452edac6b",
+        "evals/src/copilot_evals/bench.py": "86e6f1f2c3ede490fca059533dcac1fa8515acf86a342c0ce82fc71f98937ef3",
+        "evals/src/copilot_evals/bench_audio.py": "7592433de0615607e4cfee1000abd08ef2dac95c98058796d3480ba53777cba8",
+        "evals/src/copilot_evals/benchdata.py": "1b1b8e41cbd975c3d9fe48a8432eb330d7a1e7f19f1d86abea32ab60f3a59c67",
+        "evals/src/copilot_evals/calibrate.py": "9c00deec95faa816ce7649ed0338759805bac3943e62a3717bb521526e68ea7e",
+        "evals/src/copilot_evals/coding_eval.py": "ee8533c9a5e55308a04a89c046ec6806ef8dbcd414eb220e8a2ec6cc90bbccaf",
+        "evals/src/copilot_evals/company_eval.py": "0b7c33f2ba87e32609038f307a6c30f6c3fdb19a0c2d343d8ca3dd360c2c7f45",
+        "evals/src/copilot_evals/detector_eval.py": "3dd3afbc2e466bdc8ae1954d9960dbe999dbb2fdfd3cce8fb37e99044a644e7a",
+        "evals/src/copilot_evals/knowledge_eval.py": "6c4bfd70c1101d3f02da4165b213ccbd26b18dbc7c991a5c4b793266ea5aaf12",
+        "evals/src/copilot_evals/live_answer_artifacts.py": "990350a8a101f7afa26a04e18b18d4b3e3a163fdb11ae8fa01d9db852018c7ed",
+        "evals/src/copilot_evals/live_answer_async_checkpoints.py": "38a6a203774c118499d2890d341f1a082483bf58ac8dcf6a612bf4a2eeabd2c6",
+        "evals/src/copilot_evals/live_answer_checkpoints.py": "fb48bb0e4869e8434782e946564b5db4b1f31d9626ef991b92641d7553f94b4a",
+        "evals/src/copilot_evals/live_answer_coding.py": "54f8f13c2a4e321899373347f87338d949417d66b1057de0e609bbbf921b541d",
+        "evals/src/copilot_evals/live_answer_coding_runner.py": "18eabd9ec12e49779424f9dd7692396a987a077aba4fedb2a7fb6df8d81f5beb",
+        "evals/src/copilot_evals/live_answer_corpus.py": "416a3a868af4a1f6521cbaf47bc0a61f10f2b557ed7b23dde166c5d435b38116",
+        "evals/src/copilot_evals/live_answer_diagnostics.py": "315e3a0a37ee35b425f5edd47ae89c6097aba9d56a6afed9eda6904f3c26e547",
+        "evals/src/copilot_evals/live_answer_eval.py": "794ebdf8ad2846286fa37ae592cbad826f62bba59c2877b9a07bedca3b330930",
+        "evals/src/copilot_evals/live_answer_judge.py": "5e04ca2077709b3eb85305e9183302eedddf9dc2b64e1dbeab1d0aa99fb5f283",
+        "evals/src/copilot_evals/live_answer_replay.py": "aaf8abd72e9162ef4f950c6358867db7cdd01da500872ff1807e15e9a300a966",
+        "evals/src/copilot_evals/live_answer_review.py": "fde312d07cf35d9f19d402ddf3a6369b3df290cbb2580584fbd53fd874fc4d75",
+        "evals/src/copilot_evals/live_answer_schedule.py": "429493b88c81f10b9f1a6f144408b9c17adeaaf7316d3f1f48d2282503a4af16",
+        "evals/src/copilot_evals/live_answer_session_replay.py": "a86922ca8be882ba29b2d6cfef4bb309bc6ecb2aa850f5e852346fc9d7f0414e",
+        "evals/src/copilot_evals/live_answer_stats.py": "4a8a5a86a0e93023f08f0a13c4abe20016cd6ea5f54b8790969a7bec6fbc09c9",
+        "evals/src/copilot_evals/live_answer_variants.py": "ea2b79d4dbaa3cbac61bf83221f96f048c75696d88c7b56d3dc7c03d3f2a4f0a",
+        "evals/src/copilot_evals/quality_checks.py": "5e66e9d332c948b534238bc750ca120b8c611fa1bdc9289293c955c297ddc763",
+        "evals/src/copilot_evals/quality_coding.py": "5dc42d1cf9a872008a541142caec5aef6aa976a430ae451e0e1da03ab23932bf",
+        "evals/src/copilot_evals/quality_grade.py": "33d9641feb47312afdeafb43660ca2cf28cb17d8d71d0b426787f98aeb1103b0",
+        "evals/src/copilot_evals/quality_matrix.py": "49b0831c0133787c22bb27d0df7fe07706c2b48bb36cdb65e4ccf650cb2ba18a",
+        "evals/src/copilot_evals/quality_report.py": "511e3f70806f34b815e416b5204f84cd7807e4aef0104838ae73ab0dc3b168ec",
+        "evals/src/copilot_evals/replay.py": "3137fb73192670c5b2779c9a377756270a724cdb89a6751896e320195933f329",
+        "evals/src/copilot_evals/sensei.py": "5a8a060fdefd2143eac4301100917dbefc3450e63135bb1a07f4f5507a578836",
+        "evals/src/copilot_evals/sensei_benchmark.py": "ed66c125b5e42858358a782ae32fc68a1e1d1f1e2e14732003c72332acc34b7c",
+        "evals/src/copilot_evals/sensei_diagnosis.py": "b563110bd70188f4f756885e39c5568336f705f16b6994b3e6d18e6d66c35a07",
+        "evals/src/copilot_evals/sensei_judge.py": "c0de7a9604ce2658f45c73681db80fc2667dc62f649b7d94c25390fd043c29c7",
+        "evals/src/copilot_evals/sensei_report.py": "c9b96cd5fb43abdde85513b7c6b12e7548f8a074ff178db433f88aae7dd9a7ba",
+        "evals/src/copilot_evals/sensei_review.py": "d70c5a28bf0aaa3b8e548082d17092be1c8fe635c18c893475ba7275fe27ba74",
+        "evals/src/copilot_evals/sensei_runtime.py": "a84ec77e33afccbc2df2a71a42f73d07194ea48fcadc6f85e391a5b4f993dcf4",
+        "evals/src/copilot_evals/session_eval.py": "33734f53e198c410172a047c68a80bc365b6c08b5bce0a488863d9ec7a3098b5",
+        "evals/src/copilot_evals/vad.py": "a226e952d0a88a63c3127a44c01d9e825e9b237b4c66cb7cc1d11b8d6534e5b6"
+      },
+      "source_archive": {
+        "filename": "source-archive.zip",
+        "sha256": "c894352093c3a99e5b932cf235c7225de2fd0946e226db245c1c33cbdb5e3ecf",
+        "python_source_files": 121,
+        "prompt_snapshots": {},
+        "dependency_manifest_sha256": "65c9380cf25525938413fbe7f0515f9217edce4f02da3b4262fb92b36cd76eb8",
+        "scope": "Exact source/config snapshot; dependencies are identified but not vendored"
+      },
+      "raw_sha256": {
+        "identity.json": "6a2c5c18c3a36e598e95333f988a69257de4c93f43b5d237752756a703fc00af",
+        "sessions.json": "f5527725bc515e39df6e6f8134512043a3e577a91b220a73c6cb9dd74d46a848",
+        "request-identities.json": "589baf8a80a5b78222bf2c6a0c399d2fdd0375e36842aec2e944c225289ba6ec",
+        "provider-attempts.json": "06c0e2c38738eaf8745997e9b04b7020afce90e2361a16f423fab8a8c7620624",
+        "summary.json": "4b2f49e4acf71d7faecc034aa193b51e24521ce74685224fed9bfa40bea2f95b"
+      }
+    },
+    {
+      "run_id": "control_completion",
+      "private_directory": "C:\\Users\\A\\AppData\\Local\\Temp\\career-pilot-hidden-route-20261127-live-control-01",
+      "summary": {
+        "status": "completed",
+        "live": true,
+        "checkpoint_policy": "atomic-records-async-request-fence-v2",
+        "planned_sessions": 2,
+        "sessions": 2,
+        "dispatch_states": {
+          "completed": 2
+        },
+        "remaining_sessions": 0,
+        "ambiguous_sessions": 0,
+        "circuit_reason": null,
+        "statuses": {
+          "completed": 2
+        },
+        "invariant_violations": 0,
+        "provider_dispatches": 10,
+        "request_intents": 11,
+        "peak_provider_inflight": 4,
+        "known_usage_usd": 0.000461,
+        "observed_cost_usd": null,
+        "unresolved_reserved_usd": 0.33499,
+        "usage_source": "provider-reported",
+        "completion_scope": "Replay protocol completion; not semantic answer completeness or quality",
+        "admission_scope": {
+          "max_sessions": 1,
+          "max_provider_inflight": 4,
+          "includes": [
+            "answer streams",
+            "Responses detector",
+            "Decisions detector",
+            "retries"
+          ],
+          "cost_reserved_after_admission": true,
+          "queued_time_counts_toward_router_deadline": true,
+          "immediate_rate_auth_stop": true,
+          "per_request_queue_wait_ms": null,
+          "circuit_scope": "completed sessions; bounded existing provider retry routes"
+        },
+        "cost_statuses": {
+          "reserved": 4,
+          "usage": 6,
+          "failed_before_submission": 1
+        }
+      },
+      "budget_limit_usd": 0.5,
+      "settings": {
+        "llm_providers": [
+          "openai"
+        ],
+        "haiku_model": "claude-haiku-4-5",
+        "sonnet_model": "claude-sonnet-5-5",
+        "bedrock_haiku_model": "anthropic.claude-haiku-4-5",
+        "bedrock_sonnet_model": "anthropic.claude-sonnet-5-5",
+        "openai_fast_model": "gpt-6-luna",
+        "openai_deep_model": "gpt-6.1-sol",
+        "openai_fast_reasoning": "none",
+        "openai_deep_reasoning": "low",
+        "openai_reasoning_headroom_tokens": 2048,
+        "openai_first_token_timeout_ms": 3000,
+        "openai_deep_first_token_timeout_ms": 6000,
+        "llm_keepalive_s": 120.0,
+        "llm_connect_timeout_s": 2.0,
+        "openai_http2": true,
+        "openai_http2_cancel_fix": true,
+        "model_prices": {
+          "claude-haiku-4-5": {
+            "input": 1.0,
+            "cached": 0.1,
+            "output": 5.0
+          },
+          "claude-sonnet-5-5": {
+            "input": 2.0,
+            "cached": 0.2,
+            "output": 10.0
+          },
+          "claude-sonnet-5": {
+            "input": 2.0,
+            "cached": 0.2,
+            "output": 10.0
+          },
+          "claude-opus-5-5": {
+            "input": 4.0,
+            "cached": 0.2,
+            "output": 20.0
+          },
+          "gpt-6.2-sol": {
+            "input": 2.0,
+            "cached": 0.1,
+            "output": 10.0
+          },
+          "gpt-6-luna": {
+            "input": 0.1,
+            "cached": 0.01,
+            "output": 0.5
+          },
+          "gpt-6.1-sol": {
+            "input": 2.0,
+            "cached": 0.1,
+            "output": 10.0
+          },
+          "gpt-6-astra": {
+            "input": 10.0,
+            "cached": 1.0,
+            "output": 50.0
+          }
+        },
+        "tier_price_multipliers": {
+          "standard": 1.0,
+          "priority": 1.75,
+          "flex": 0.5,
+          "batch": 0.5,
+          "gpt-6-astra:ultrafast": 6.0,
+          "gpt-6.1-sol:ultrafast": 6.0,
+          "gpt-6.2-sol:ultrafast": 3.0,
+          "gpt-6.2-astra:ultrafast": 3.0,
+          "gpt-6-luna:fast": 2.0,
+          "gpt-6-luna:priority": 2.0,
+          "gpt-6-sol:fast": 2.0,
+          "gpt-6-sol:priority": 2.0,
+          "gpt-6.1-sol:fast": 2.0,
+          "gpt-6.1-sol:priority": 2.0,
+          "gpt-6-astra:fast": 2.0,
+          "gpt-6-astra:priority": 2.0,
+          "gpt-6.2-sol:fast": 2.0,
+          "gpt-6.2-sol:priority": 2.0,
+          "gpt-6.2-astra:fast": 2.0,
+          "gpt-6.2-astra:priority": 2.0
+        },
+        "first_show_min_words": 8,
+        "fast_hedge_ms": 1200,
+        "openai_fast_retry_tier": "priority",
+        "openai_fast_service_tier": null,
+        "openai_deep_service_tier": "ultrafast",
+        "deep_hedge_ms": 4500,
+        "openai_deep_retry_tier": "priority",
+        "adaptive_failure_recovery": false,
+        "adaptive_expert_route": {
+          "model": "gpt-6.2-sol",
+          "reasoning": "low",
+          "service_tier": "ultrafast",
+          "retry_tier": "fast",
+          "first_token_timeout_ms": 20000,
+          "hedge_ms": null
+        },
+        "adaptive_technical_legacy": true,
+        "adaptive_interview_grounding": true,
+        "adaptive_max_tokens": 1200,
+        "adaptive_stream_idle_timeout_s": 30.0,
+        "adaptive_stream_total_timeout_s": 90.0,
+        "fast_pass_max_tokens": 250,
+        "fast_pass_priority": false,
+        "deep_pass_max_tokens": 800,
+        "deep_pass_auto": true,
+        "deep_routing": "by_need",
+        "deep_pass_auto_types": [
+          "behavioral",
+          "technical",
+          "system_design",
+          "coding",
+          "standup_status",
+          "other",
+          "respond",
+          "follow",
+          "decision",
+          "how_it_works",
+          "status_follow_up",
+          "estimate_risk"
+        ],
+        "first_token_timeout_ms": 1500,
+        "bedrock_haiku_retry_model": null,
+        "bedrock_sonnet_retry_model": null,
+        "deep_pass_thinking": "between_tools",
+        "deep_pass_effort": "low",
+        "bedrock_refusal_model": "anthropic.claude-sonnet-5"
+      },
+      "turn_settings": {
+        "openai_detector_model": "gpt-6-luna",
+        "openai_summary_model": null,
+        "openai_detector_reasoning": "none",
+        "openai_summary_reasoning": null,
+        "silence_timer_ms": 400,
+        "speculative_start_ms": 300,
+        "speculative_hold": true,
+        "speculative_min_words": 3,
+        "early_decision_interval_ms": 700,
+        "early_decision_all_modes": true,
+        "detector_max_tokens": 80,
+        "detector_api": "decisions",
+        "detector_hedge_ms": 1200,
+        "openai_detector_retry_tier": "priority",
+        "name_address_grace_ms": 1000,
+        "conversation_summary_tokens": 500,
+        "conversation_summary_chunk_tokens": 500,
+        "conversation_summary_retry_s": 30.0,
+        "detector_context_tokens": 300,
+        "final_wait_max_ms": 1500,
+        "follow_user": false,
+        "continuation_gap_ms": 5000,
+        "stt_stall_s": 30.0,
+        "flush_interval_s": 600.0
+      },
+      "turn_experiments": {
+        "B:baseline": {
+          "early_route_selection": false,
+          "early_stable_partial_ms": null,
+          "early_final_release": false,
+          "committed_final_recheck": false,
+          "late_first_text_recovery_ms": null
+        },
+        "B:routing": {
+          "early_route_selection": true,
+          "early_stable_partial_ms": null,
+          "early_final_release": false,
+          "committed_final_recheck": false,
+          "late_first_text_recovery_ms": null
+        }
+      },
+      "git_head": "8aa45aa3cff1c2ab8d43461603b5de9249031023",
+      "source_sha256": {
+        "apps/gateway/src/copilot_gateway/__init__.py": "3824deb64b93acd21d3321e794eb1b214264004466aaa51a0f4c70d3984a386f",
+        "apps/gateway/src/copilot_gateway/adaptive.py": "1382a3732bbef0e7df4e5fbf2a83e8c82781c16a8327de23ac58ea98dad7f638",
+        "apps/gateway/src/copilot_gateway/admission.py": "06aa5c84639f4c83c586904266505d7047062344465bd55b4508e3423b621a7d",
+        "apps/gateway/src/copilot_gateway/answer.py": "e036191831ad34a6e6d1e464f44f88d7f8d0c1160a623f746cfaaf2696ebd431",
+        "apps/gateway/src/copilot_gateway/audio.py": "7604b4c5f607a9af60b7bf22629217af3acfc6a769ab671771af3865c0798338",
+        "apps/gateway/src/copilot_gateway/auth.py": "da0a5e9f8a130fa0ce7dcaf563742ff768418496b81b5f719d571971704b2f25",
+        "apps/gateway/src/copilot_gateway/companionhost.py": "4cd43d3c1a14d309774d9fd426db17d5d8e2111e06167aa436e5654ffd791e48",
+        "apps/gateway/src/copilot_gateway/companionrelay.py": "e863a7fda912ffb4543e99c30a7bfd6f49e88214784e5bc64e019c1c66942c5b",
+        "apps/gateway/src/copilot_gateway/config.py": "3ac1b7a99c5341623b2ed08755387cf14230504d800eb4688ca2719e450f8ea9",
+        "apps/gateway/src/copilot_gateway/conversation.py": "0720f63c26f3de15a076fa5fb311a4a023c10b7cd004cf7459190d7dd7f204c1",
+        "apps/gateway/src/copilot_gateway/detector.py": "f6ea4af1e1cb90ce7b79e5843e096a04d7c5654447c75893b4635bc592e6e6aa",
+        "apps/gateway/src/copilot_gateway/main.py": "b08cdcfe19a3440aee44e04a53b29997cf27eb72d297bc8cc6ea310864265f9d",
+        "apps/gateway/src/copilot_gateway/metering.py": "7dd41ce9d4c849ed962ec95c87a01be126ec429ea2a6bf8ed2f3e4200fcb7a04",
+        "apps/gateway/src/copilot_gateway/offline.py": "2c8180b8e46df871957d1821f6b4c861ba9a3dbb6fe7129dc1b86a197193e656",
+        "apps/gateway/src/copilot_gateway/retrieval.py": "c7c9a0bec5d1af35ab74dc779ff719e217629dfe3d25fd14336520748ff93ced",
+        "apps/gateway/src/copilot_gateway/router.py": "a7b553aefd9b1a8a1cff558cc8964f28cec5849369bca2ea067ca5f04a368a9e",
+        "apps/gateway/src/copilot_gateway/seathost.py": "f94d73b6c4c112f9356a679c5fb2c53714a0b5db646f3ee568e952cb150fbd72",
+        "apps/gateway/src/copilot_gateway/seatrelay.py": "876f38fdd2f9a585e4ab759aefd4f3f5736d75511449d5d868500165be2a1e8e",
+        "apps/gateway/src/copilot_gateway/seatview.py": "10c37f1f9b0a2b679f92aa9a1e561c55d0acf4c1a586a1c1e9e1cf729897b72f",
+        "apps/gateway/src/copilot_gateway/session.py": "4bf8c6bb7af3907c6bb5aa7137a9da40592e4b809657a24b25c08b7eb53ea9c1",
+        "apps/gateway/src/copilot_gateway/store.py": "1077bd3fb9a2d079c20d007f3690966e65b7943e01cde4a985b64d8d5cfa5fbe",
+        "apps/gateway/src/copilot_gateway/stt/__init__.py": "707dd6a48507e3b05c249092fa2e4ff95062443514102da0b74c7b9878f5a602",
+        "apps/gateway/src/copilot_gateway/stt/base.py": "9dc86e9ca7e43121bab058c914ac62fa80d88f49bf8c7f38c6325c1a700c4a9c",
+        "apps/gateway/src/copilot_gateway/stt/deepgram.py": "ef6ce30e0fedd9e091ec00f9d3098b05e6f2e934a59de334d327e186f35dc7fe",
+        "apps/gateway/src/copilot_gateway/stt/resilient.py": "57b6081a71ea75c74658bf8979b6e1e7d4dda705efe566d67419255b1a213b8f",
+        "apps/gateway/src/copilot_gateway/testing.py": "98f1ec1703d38fdfb0b4a04ed80f2f8ccb277616617a6f5448e620c45d7b2341",
+        "apps/gateway/src/copilot_gateway/turn.py": "9530cd257402374646d1cb35d24589404d8639cef48b54924df5201e8eb7b04d",
+        "packages/core/src/copilot_core/__init__.py": "6dcbddae494961b8ceb75d7c938fbc40d974d1a2cde9854519b5d73dcbfc539d",
+        "packages/core/src/copilot_core/_http2_cancel.py": "1be834ba85ad818f02882bd8e6bfe29b440df7089779ef61c6a58745ee60ca3c",
+        "packages/core/src/copilot_core/_openai_http.py": "7137d2b949c1792952d5ba0fe667f21c93780cc8e33cd352225915a445a8f3ba",
+        "packages/core/src/copilot_core/ask.py": "4b4c905b8982a175d4e2dc49ca281d0dcf4b263b73e1a91b300f0d2f9944559a",
+        "packages/core/src/copilot_core/auth.py": "962c41ed52bf484e1ae8d278bf30e8133465e349f4f7a124d6017799defea7e8",
+        "packages/core/src/copilot_core/aws.py": "04e3d38552e40ef48612304cd2c39c580ac5c89bd94af36a06a9c87a10210099",
+        "packages/core/src/copilot_core/calendars.py": "6740459de76d9c9fe9f407cd462f8f0843df92bc00f26be1c54877cea7b17d24",
+        "packages/core/src/copilot_core/call_language_text.py": "5443518012997b9546b8640aac117212de6216e534cbe31b38ea82a74968785c",
+        "packages/core/src/copilot_core/call_suggestions.py": "0dcf87fbcbea20c1ead7f25256f6439fcd60b87ca3cd8385af504b4c8302bd75",
+        "packages/core/src/copilot_core/careeros.py": "768ae2819fc27abf5fb39b0a39294084e2873ff9eb33d721557fbefe7f09d5ea",
+        "packages/core/src/copilot_core/companions.py": "d0d6917293818e7863e13139b7f025fe297f556aa56f2396e520a42f152215b5",
+        "packages/core/src/copilot_core/config.py": "5cf31727abac8e0b55bcfaf9b33551d09cfbab5dd58d5c500667041d27ee71c9",
+        "packages/core/src/copilot_core/crypto.py": "021b3a248c07d94abf62e301cdaaaaf82d7ef77b743f433a0b407d4ba6d9708b",
+        "packages/core/src/copilot_core/db.py": "175421aa814d65cfa72801554d9a442715b11921d6423d468e4a01039a7137e1",
+        "packages/core/src/copilot_core/dblogins.py": "435418c5333d72e9164d0cc21660b1f01b2ea1a450b4cfb99e01f7de7ff0d1af",
+        "packages/core/src/copilot_core/devroles.py": "964952a91e82a89d022a34f5528b0b8fc69746b74a3cd6d1fa3dfea98c814454",
+        "packages/core/src/copilot_core/dotenv.py": "3fe209eb85edb7804885f41a383c2cd37e6a848f641babba0f689f52bfcf8c5f",
+        "packages/core/src/copilot_core/emailkey.py": "ee3c4c048e7484f5db9e4ab3dbb6cb503a8fab3294e47b4e2e31a997104ffd8c",
+        "packages/core/src/copilot_core/embed.py": "9b39dd93e966d58cd8e281b87fe436123314cc93cce1192a218c8189c5326a50",
+        "packages/core/src/copilot_core/gcp.py": "d5e1317a0af9de8c9156f3152e6016ac645b5997aaf6a1a368d720ddb399541b",
+        "packages/core/src/copilot_core/identities.py": "26e28bbe48f02976a9a8d1bd5f0bf1927dca769601ac76881613f0393f67897f",
+        "packages/core/src/copilot_core/identity.py": "ed18915be73243cc6e9230415f0f0db063e5892311265437e7e37212db56cedd",
+        "packages/core/src/copilot_core/ids.py": "7659b13a433451540175102845c328e7cda12d7fc1fc481b6a76d5c3b6ef7cf1",
+        "packages/core/src/copilot_core/jobs.py": "26a6bce4e7419f2cfb8ed23492efeaa4f6b2db55e3884855a3d5576580c972ce",
+        "packages/core/src/copilot_core/keys.py": "092d10d69bad48c1ed38001cbe6c4c710bad54058163bd0406d08e5a2e14dcc4",
+        "packages/core/src/copilot_core/knowledge.py": "d711f8c5d5fc8308f6cf813c56bf46a443adc0fcd960553041b3f8c44b608761",
+        "packages/core/src/copilot_core/languages.py": "d40c59ebf2dfbdda575ce138af9e195e87e893f1e89ad4a6f993be8a0ad8c991",
+        "packages/core/src/copilot_core/livekit.py": "9af4c3865e9f7420d53b9d1643d8b6e25dc5778792012beceffd6ff3269875f7",
+        "packages/core/src/copilot_core/llm.py": "32a655af818be6dc0a73e38a78493c5973f55f8b2f80078b5da0f5e119e90c39",
+        "packages/core/src/copilot_core/logs.py": "8cd954aac8a5888a309b5b4a420fd8fa562b8b583118b7919a07d9295a1c34cb",
+        "packages/core/src/copilot_core/meeting_preparation.py": "a234332a7ecf56f8ad9f59002f7000a069d7ed589aba49910839915081c96460",
+        "packages/core/src/copilot_core/migrate.py": "91a8ac30d5085ebdba795e675e97c9095a508386afcacbabc8084cb581892daf",
+        "packages/core/src/copilot_core/operations.py": "9f49314c4cac160cc6afdaed830e4b4f163a5efe68680d92b076bb075c4d61c5",
+        "packages/core/src/copilot_core/pack_operations.py": "30cc59c29f3bc2cd3f4283f29340b25573db322cc1766aecd3f2c4b8a0e1e8bd",
+        "packages/core/src/copilot_core/packs.py": "ec71cc8e63cc3992ae2cf2851f1cd79e26203691230ceb5d109aadbecee12380",
+        "packages/core/src/copilot_core/personal_ai.py": "f2b2ed56477eba3e159f1407338e75d7eb6f76589bc3ee3885615a47b8e0a435",
+        "packages/core/src/copilot_core/practice.py": "36d73b49d48a809b865481f521b2458acecf34482c59f7a7093db0fca5b0003e",
+        "packages/core/src/copilot_core/pricing.py": "2e64880ac2fe0cac860bfc7fd9ed07fd2042a9ecc291bc8892d110bcc75cb25b",
+        "packages/core/src/copilot_core/profiles.py": "fd2d138661514a8fa6a0e573ae8b53122f157d29e0422e1edc4acb91aa391bdb",
+        "packages/core/src/copilot_core/prompts.py": "67fbd9cc4f334992ad0f1ff94b0edd11dfd7a14172dc1d9ce5c26ca762610306",
+        "packages/core/src/copilot_core/providers.py": "606606c88afea1caa11941d74811f7359cb0e7ca1ba8298d1d3b60d408d184af",
+        "packages/core/src/copilot_core/resumes.py": "1134b52113583b86ed607d7edf1d61a076580887ffc12d68d4497dade19d775c",
+        "packages/core/src/copilot_core/screen.py": "4959543eaa90c72127b1ab8b632b388a498e34e18a438ef580dc1c15eca88322",
+        "packages/core/src/copilot_core/seats.py": "0ab377f40fc78d19ce724966e85308f28bba7b5b011aa1dc6feb18f6778cc1e0",
+        "packages/core/src/copilot_core/session_writes.py": "7cd386089c36f5fc68b36c17b3207ba6fe2e8b019efe3756d15d7d79041a1851",
+        "packages/core/src/copilot_core/storage.py": "2c1daf12290c6b1a7536d5fa59e3f5963fbbc26097183d118c31769e07cd8852",
+        "packages/core/src/copilot_core/teststack.py": "d57f9fedda390068143f7bace72fed1f128893c54895f95b400424f09e236fb1",
+        "packages/core/src/copilot_core/usage.py": "985319161d1f64e4a0703d9fd21fec90a8bd17ae962593a39d00cd878aa9a466",
+        "packages/core/src/copilot_core/valkey_client.py": "2b1a8ed4fce35407a621b69f64cc5e7a9c5415c915fb7da3e98a016a073f5316",
+        "packages/core/src/copilot_core/versions.py": "37e77382089e0d35b6cdd595b9273627095aaadc056d095a4f2169976055467c",
+        "packages/core/src/copilot_core/workplace.py": "877805aebe870b716752660eaf3940c41e496392d965a9c706f6bc480e991083",
+        "packages/protocol/python/copilot_protocol/__init__.py": "30e6bc87289a636ca2137469a89b192b8fc39e8d366df9ee0efb03a880dbbbb3",
+        "packages/protocol/python/copilot_protocol/audio.py": "dd1583a4d903edfb7e0beb16c3862093062e02ba2e0ff5b858f380b90c8c3cdb",
+        "packages/protocol/python/copilot_protocol/models.py": "0e5d6c691b721f14e9448bcf35d272232dbf9c8c28b271977a2ceed6e829a40a",
+        "evals/src/copilot_evals/__init__.py": "fe066005a6da7cd71e4331719e8d0580611ae3ef8ba4cb5fc783b78c13f02a7e",
+        "evals/src/copilot_evals/answer_eval.py": "fdcc2ebcfa30efe3aeaa635712c6fa996ab76f3e6ef063fd30ce557452edac6b",
+        "evals/src/copilot_evals/bench.py": "86e6f1f2c3ede490fca059533dcac1fa8515acf86a342c0ce82fc71f98937ef3",
+        "evals/src/copilot_evals/bench_audio.py": "7592433de0615607e4cfee1000abd08ef2dac95c98058796d3480ba53777cba8",
+        "evals/src/copilot_evals/benchdata.py": "1b1b8e41cbd975c3d9fe48a8432eb330d7a1e7f19f1d86abea32ab60f3a59c67",
+        "evals/src/copilot_evals/calibrate.py": "9c00deec95faa816ce7649ed0338759805bac3943e62a3717bb521526e68ea7e",
+        "evals/src/copilot_evals/coding_eval.py": "ee8533c9a5e55308a04a89c046ec6806ef8dbcd414eb220e8a2ec6cc90bbccaf",
+        "evals/src/copilot_evals/company_eval.py": "0b7c33f2ba87e32609038f307a6c30f6c3fdb19a0c2d343d8ca3dd360c2c7f45",
+        "evals/src/copilot_evals/detector_eval.py": "3dd3afbc2e466bdc8ae1954d9960dbe999dbb2fdfd3cce8fb37e99044a644e7a",
+        "evals/src/copilot_evals/knowledge_eval.py": "6c4bfd70c1101d3f02da4165b213ccbd26b18dbc7c991a5c4b793266ea5aaf12",
+        "evals/src/copilot_evals/live_answer_artifacts.py": "990350a8a101f7afa26a04e18b18d4b3e3a163fdb11ae8fa01d9db852018c7ed",
+        "evals/src/copilot_evals/live_answer_async_checkpoints.py": "38a6a203774c118499d2890d341f1a082483bf58ac8dcf6a612bf4a2eeabd2c6",
+        "evals/src/copilot_evals/live_answer_checkpoints.py": "fb48bb0e4869e8434782e946564b5db4b1f31d9626ef991b92641d7553f94b4a",
+        "evals/src/copilot_evals/live_answer_coding.py": "54f8f13c2a4e321899373347f87338d949417d66b1057de0e609bbbf921b541d",
+        "evals/src/copilot_evals/live_answer_coding_runner.py": "18eabd9ec12e49779424f9dd7692396a987a077aba4fedb2a7fb6df8d81f5beb",
+        "evals/src/copilot_evals/live_answer_corpus.py": "416a3a868af4a1f6521cbaf47bc0a61f10f2b557ed7b23dde166c5d435b38116",
+        "evals/src/copilot_evals/live_answer_diagnostics.py": "315e3a0a37ee35b425f5edd47ae89c6097aba9d56a6afed9eda6904f3c26e547",
+        "evals/src/copilot_evals/live_answer_eval.py": "794ebdf8ad2846286fa37ae592cbad826f62bba59c2877b9a07bedca3b330930",
+        "evals/src/copilot_evals/live_answer_judge.py": "5e04ca2077709b3eb85305e9183302eedddf9dc2b64e1dbeab1d0aa99fb5f283",
+        "evals/src/copilot_evals/live_answer_replay.py": "aaf8abd72e9162ef4f950c6358867db7cdd01da500872ff1807e15e9a300a966",
+        "evals/src/copilot_evals/live_answer_review.py": "fde312d07cf35d9f19d402ddf3a6369b3df290cbb2580584fbd53fd874fc4d75",
+        "evals/src/copilot_evals/live_answer_schedule.py": "429493b88c81f10b9f1a6f144408b9c17adeaaf7316d3f1f48d2282503a4af16",
+        "evals/src/copilot_evals/live_answer_session_replay.py": "a86922ca8be882ba29b2d6cfef4bb309bc6ecb2aa850f5e852346fc9d7f0414e",
+        "evals/src/copilot_evals/live_answer_stats.py": "4a8a5a86a0e93023f08f0a13c4abe20016cd6ea5f54b8790969a7bec6fbc09c9",
+        "evals/src/copilot_evals/live_answer_variants.py": "ea2b79d4dbaa3cbac61bf83221f96f048c75696d88c7b56d3dc7c03d3f2a4f0a",
+        "evals/src/copilot_evals/quality_checks.py": "5e66e9d332c948b534238bc750ca120b8c611fa1bdc9289293c955c297ddc763",
+        "evals/src/copilot_evals/quality_coding.py": "5dc42d1cf9a872008a541142caec5aef6aa976a430ae451e0e1da03ab23932bf",
+        "evals/src/copilot_evals/quality_grade.py": "33d9641feb47312afdeafb43660ca2cf28cb17d8d71d0b426787f98aeb1103b0",
+        "evals/src/copilot_evals/quality_matrix.py": "49b0831c0133787c22bb27d0df7fe07706c2b48bb36cdb65e4ccf650cb2ba18a",
+        "evals/src/copilot_evals/quality_report.py": "511e3f70806f34b815e416b5204f84cd7807e4aef0104838ae73ab0dc3b168ec",
+        "evals/src/copilot_evals/replay.py": "3137fb73192670c5b2779c9a377756270a724cdb89a6751896e320195933f329",
+        "evals/src/copilot_evals/sensei.py": "5a8a060fdefd2143eac4301100917dbefc3450e63135bb1a07f4f5507a578836",
+        "evals/src/copilot_evals/sensei_benchmark.py": "ed66c125b5e42858358a782ae32fc68a1e1d1f1e2e14732003c72332acc34b7c",
+        "evals/src/copilot_evals/sensei_diagnosis.py": "b563110bd70188f4f756885e39c5568336f705f16b6994b3e6d18e6d66c35a07",
+        "evals/src/copilot_evals/sensei_judge.py": "c0de7a9604ce2658f45c73681db80fc2667dc62f649b7d94c25390fd043c29c7",
+        "evals/src/copilot_evals/sensei_report.py": "c9b96cd5fb43abdde85513b7c6b12e7548f8a074ff178db433f88aae7dd9a7ba",
+        "evals/src/copilot_evals/sensei_review.py": "d70c5a28bf0aaa3b8e548082d17092be1c8fe635c18c893475ba7275fe27ba74",
+        "evals/src/copilot_evals/sensei_runtime.py": "a84ec77e33afccbc2df2a71a42f73d07194ea48fcadc6f85e391a5b4f993dcf4",
+        "evals/src/copilot_evals/session_eval.py": "33734f53e198c410172a047c68a80bc365b6c08b5bce0a488863d9ec7a3098b5",
+        "evals/src/copilot_evals/vad.py": "a226e952d0a88a63c3127a44c01d9e825e9b237b4c66cb7cc1d11b8d6534e5b6"
+      },
+      "source_archive": {
+        "filename": "source-archive.zip",
+        "sha256": "cde5fb37e8c5f64da9d4d8afeb147ce21f6b839de7d36145f690248a9110f41e",
+        "python_source_files": 121,
+        "prompt_snapshots": {},
+        "dependency_manifest_sha256": "65c9380cf25525938413fbe7f0515f9217edce4f02da3b4262fb92b36cd76eb8",
+        "scope": "Exact source/config snapshot; dependencies are identified but not vendored"
+      },
+      "raw_sha256": {
+        "identity.json": "8a88ca91cd20977a91cd5ce05d19954dad2b7afe57e3d4f6155110ca2a871e76",
+        "sessions.json": "edacc9f4febbc8a86df2bcf2d2aa3cf26ea993d22a3bc483bc3602cdae0e4adf",
+        "request-identities.json": "755b730847bf29686b5f2428359d6b86421f8b77ec741e2fd1d4012db6ea120b",
+        "provider-attempts.json": "ca2536f6888f42f49512dfa3c37ef7e8649086a6a7834895923ef05dab7ea6b3",
+        "summary.json": "8d4bf50a765dae179692fc1b1e9df43add580f91e679bcd6f31f4e2ac64063ac"
+      }
+    }
+  ],
+  "validation_role": "Historical wider dirty-workspace evidence, not validation of the isolated PR configuration. See implementation report for provenance."
+}
